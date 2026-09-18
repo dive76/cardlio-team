@@ -4,66 +4,173 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>cardlio Team</title>
-<meta name="description" content="The cardlio team library in your browser. Coming soon.">
+<meta name="description" content="Your cardlio team library in any browser: every card your team shared, searchable, exportable and claimable. Sign in with your Apple ID.">
 <meta name="robots" content="noindex">
+<!-- Scripts only from this site and Apple's CloudKit CDN; data only to
+     Apple's iCloud. Card text is untrusted: it is only ever set with
+     textContent, never as HTML. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.apple-cloudkit.com; connect-src 'self' https://*.apple-cloudkit.com https://*.icloud.com https://*.icloud-content.com; img-src 'self' data: blob: https://*.icloud-content.com https://*.apple-cloudkit.com https://*.apple.com; style-src 'self' 'unsafe-inline'; frame-src https://*.apple-cloudkit.com https://*.apple.com https://*.icloud.com; font-src 'self' https://*.apple-cloudkit.com; base-uri 'none'; form-action 'none'">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%234F46E5'/%3E%3Cstop offset='1' stop-color='%238B5CF6'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='url(%23g)'/%3E%3Crect x='12' y='20' width='40' height='26' rx='5' fill='white' transform='rotate(-6 32 33)'/%3E%3C/svg%3E">
-<style>
-  /* Placeholder until the team page exists. Self-contained on purpose:
-     no request leaves this site until the real page adds Apple's CloudKit. */
-  @font-face {
-    font-family: "Space Grotesk";
-    font-style: normal;
-    font-weight: 300 700;
-    font-display: swap;
-    src: url("assets/fonts/space-grotesk-vf.woff2") format("woff2-variations");
-  }
-  :root {
-    --font-display: "Space Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    --indigo: #4F46E5;
-    --violet: #8B5CF6;
-    --bg: #12101f;
-    --ink: #f0f0f6;
-    --muted: #9ea3b5;
-  }
-  * { box-sizing: border-box; margin: 0; }
-  html, body { height: 100%; }
-  body {
-    background: radial-gradient(1200px 600px at 20% -10%, rgba(79,70,229,.35), transparent 60%),
-                radial-gradient(900px 500px at 110% 110%, rgba(139,92,246,.28), transparent 60%),
-                var(--bg);
-    color: var(--ink);
-    font: 17px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    display: grid;
-    place-items: center;
-    padding: 24px 16px;
-  }
-  main { max-width: 520px; text-align: center; }
-  .mark { font-family: var(--font-display); font-weight: 700; font-size: 20px; color: #c7c2ff; letter-spacing: -.01em; }
-  h1 {
-    font-family: var(--font-display);
-    font-weight: 700;
-    font-size: clamp(36px, 8vw, 56px);
-    line-height: 1.05;
-    letter-spacing: -.02em;
-    margin: 18px 0 16px;
-    text-wrap: balance;
-  }
-  h1 span {
-    background: linear-gradient(90deg, #a5a0ff, var(--violet));
-    -webkit-background-clip: text; background-clip: text; color: transparent;
-  }
-  p { color: var(--muted); text-wrap: pretty; }
-  a { color: #c7c2ff; }
-  .back { display: inline-block; margin-top: 28px; font-weight: 600; text-decoration: none; }
-  .back:hover { text-decoration: underline; }
-</style>
+<link rel="stylesheet" href="app.css?v=1">
 </head>
 <body>
-<main>
-  <div class="mark">cardlio</div>
-  <h1>Your team library, <span>in the browser.</span></h1>
-  <p>Soon you'll be able to see your team's cards here, from any computer, after signing in with your Apple&nbsp;ID. Until then, the team library lives in the cardlio app on iPhone and Mac.</p>
-  <a class="back" href="https://cardlio.app/">cardlio.app →</a>
-</main>
+
+<header class="topbar">
+  <a class="brand" href="/" aria-label="cardlio Team, home">
+    <span class="brand-mark" aria-hidden="true"><i></i></span>
+    <span class="brand-name">cardlio<span>Team</span></span>
+  </a>
+  <div class="spacer"></div>
+  <span class="who" id="who" hidden></span>
+  <button class="icon-btn" id="refresh" type="button" title="Reload from iCloud" aria-label="Reload from iCloud" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.9-3.9L4 8.5"/><path d="M4 4v4.5h4.5"/><path d="M4 13a8 8 0 0 0 14.9 3.9l1.1-1.4"/><path d="M20 20v-4.5h-4.5"/></svg>
+  </button>
+  <div id="apple-sign-out-button"></div>
+</header>
+
+<!-- ================= signed out ================= -->
+<section class="welcome" id="welcome" hidden>
+  <div class="welcome-inner">
+    <div>
+      <h1>Your team's cards, <span class="grad">in any browser.</span></h1>
+      <p class="lead">Every business card your team shared from cardlio, on any computer: search the whole fair's haul, claim the leads that are yours, and take them with you as vCard or CSV.</p>
+      <div class="signin-box">
+        <div id="apple-sign-in-button"></div>
+        <span class="fine">Use the Apple ID you use with cardlio on your iPhone or Mac.</span>
+      </div>
+      <ul class="promises">
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg><span><b>Apple's sign-in, not ours.</b> Your password goes to Apple only. This site has no accounts and no server.</span></li>
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 20v-1.5a3.5 3.5 0 0 0-3.5-3.5h-3A3.5 3.5 0 0 0 7 18.5V20"/><circle cx="12" cy="8.5" r="3.5"/></svg><span><b>Only your teams.</b> The page reads the teams you made or were invited to, and nothing else from your iCloud.</span></li>
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12s3.5-7 9-7 9 7 9 7-3.5 7-9 7-9-7-9-7z"/><circle cx="12" cy="12" r="3"/></svg><span><b>No tracking.</b> No analytics, no cookies of ours. The only connection is to Apple's iCloud.</span></li>
+      </ul>
+    </div>
+    <div class="welcome-visual" aria-hidden="true">
+      <div class="demo-card a"><div><div class="n">Elena Vargas</div><div class="t">Creative Director</div></div><div><div class="c">Solstice Design Co.</div><div class="bar"></div></div></div>
+      <div class="demo-card b"><div><div class="n">Yuki Hamasaki</div><div class="t">Head of Chartering</div></div><div><div class="c">Kaito Marine K.K.</div><div class="bar"></div></div></div>
+      <div class="demo-card c"><div><div class="n">Ingrid Halvorsen</div><div class="t">Operations Manager</div></div><div><div class="c">Nordvik Marine AS</div><div class="bar"></div></div></div>
+      <div class="demo-pill"><span class="dot"></span>Claimed by Sam</div>
+      <div class="demo-pill two">+ 23 cards from the stand</div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= signed in ================= -->
+<div class="app" id="app" hidden>
+  <nav class="sidebar" aria-label="Teams">
+    <div class="side-title">Teams</div>
+    <ul class="team-nav" id="team-nav"></ul>
+    <p class="side-note">Create teams and invite people in the cardlio app on iPhone or Mac.</p>
+  </nav>
+
+  <main class="main" id="main">
+    <label class="team-select"><span class="sr-only">Team</span><select class="select" id="team-select" style="width:100%"></select></label>
+
+    <div id="loading-teams">
+      <ul class="grid" aria-hidden="true" id="skeletons"></ul>
+    </div>
+
+    <div id="no-teams" class="empty" hidden>
+      <h2>No teams yet</h2>
+      <p>Create a team in the cardlio app on your iPhone or Mac, or accept an invite on this Apple ID. It will show up here.</p>
+    </div>
+
+    <div id="team-view" hidden>
+      <div class="team-head">
+        <div>
+          <h1 id="team-name"></h1>
+          <p class="team-sub" id="team-sub"></p>
+        </div>
+      </div>
+
+      <div class="stats" id="stats"></div>
+
+      <div class="toolbar">
+        <label class="search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg>
+          <span class="sr-only">Search cards</span>
+          <input id="search" type="search" placeholder="Search name, company, email, city…" autocomplete="off" spellcheck="false">
+        </label>
+        <div class="segmented" role="group" aria-label="Show">
+          <button type="button" data-filter="all" aria-pressed="true">All</button>
+          <button type="button" data-filter="open" aria-pressed="false">Unclaimed</button>
+          <button type="button" data-filter="taken" aria-pressed="false">Claimed</button>
+        </div>
+        <label><span class="sr-only">Sort</span>
+          <select class="select" id="sort">
+            <option value="new">Newest first</option>
+            <option value="name">Name</option>
+            <option value="company">Company</option>
+          </select>
+        </label>
+        <div class="menu-wrap">
+          <button class="btn" id="export-btn" type="button" aria-haspopup="true" aria-expanded="false">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M5 19h14"/></svg>
+            Export
+          </button>
+          <div class="menu" id="export-menu" role="menu" hidden>
+            <button type="button" role="menuitem" data-export="vcf">Contacts (vCard)<small>For Apple Contacts, Outlook, Google</small></button>
+            <button type="button" role="menuitem" data-export="csv">Spreadsheet (CSV)<small>For Excel, Numbers, a CRM import</small></button>
+          </div>
+        </div>
+      </div>
+      <div class="chips" id="event-chips" hidden></div>
+
+      <p class="result-line" id="result-line" aria-live="polite"></p>
+      <ul class="grid" id="grid"></ul>
+      <div id="no-match" class="empty" hidden>
+        <h2>Nothing matches</h2>
+        <p>Try a different search, or show all cards.</p>
+      </div>
+      <div id="team-empty" class="empty" hidden>
+        <h2>No cards in this team yet</h2>
+        <p>In the cardlio app, select cards and choose <b>Share with Team</b>. They appear here right away.</p>
+      </div>
+    </div>
+
+    <div class="alert" id="alert" role="alert" hidden></div>
+    <p class="foot-note">This page reads your teams straight from Apple's iCloud and keeps nothing. <a href="https://cardlio.app/privacy.html">Privacy</a> · <a href="https://cardlio.app/">cardlio.app</a></p>
+  </main>
+</div>
+
+<!-- card detail -->
+<dialog id="detail" aria-labelledby="d-name">
+  <div class="detail">
+    <div class="photo" id="d-photo"></div>
+    <div class="info">
+      <button class="icon-btn close" type="button" id="d-close" aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+      <div>
+        <h2 id="d-name"></h2>
+        <p class="role" id="d-role"></p>
+      </div>
+      <div class="fields" id="d-fields"></div>
+      <div class="notes" id="d-notes" hidden></div>
+      <p class="provenance" id="d-prov"></p>
+      <div class="actions" id="d-actions"></div>
+    </div>
+  </div>
+</dialog>
+
+<!-- claim -->
+<dialog id="claim-dialog" class="small-dialog" aria-labelledby="c-title">
+  <form method="dialog" id="claim-form">
+    <h2 id="c-title">Claim this card?</h2>
+    <p id="c-text"></p>
+    <label>Your name, as the team sees it
+      <input id="c-name" required maxlength="60" autocomplete="name">
+    </label>
+    <div class="row">
+      <button class="btn" type="button" id="c-cancel">Cancel</button>
+      <button class="btn primary" type="submit" id="c-go">Claim and download</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="config.js?v=1"></script>
+<script src="https://cdn.apple-cloudkit.com/ck/2/cloudkit.js"></script>
+<script src="app.js?v=1"></script>
 </body>
 </html>

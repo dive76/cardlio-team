@@ -11,14 +11,26 @@ iCloud.
 
 DNS: a CNAME record `team` → `dive76.github.io` at the domain's DNS host.
 
-## /spike/ — CloudKit JS test (read-only)
+## The page
 
-https://team.cardlio.app/spike/ signs in with an Apple ID and lists the
-teams that account owns (private database) and joined (shared database),
-then a team's cards with their photos. It only opens zones named `team-…`
-(the same private database also holds the person's own card library) and
-never writes.
+`index.html` + `app.js` + `app.css` — no build step. Sign in with an Apple
+ID (Apple's CloudKit JS; token in `config.js`, public by design, locked to
+this origin), then:
 
-Needs the CloudKit API token in `spike/config.js`. The token is public by
-design: CloudKit honours it only for the allowed origin, and every read
-still needs the visitor's own Apple ID sign-in.
+  * teams the account OWNS (private database) and JOINED (shared database);
+    a team is a `team-…` zone with a `TeamInfo` record (its name — the web
+    API cannot see the zone-wide share the apps take it from);
+  * stats, search (accent-insensitive), All / Unclaimed / Claimed, event
+    chips, sort; a detail view with every field, copy buttons, mail / tel /
+    Apple Maps links;
+  * vCard per card (photo embedded when the image host allows it), vCard or
+    CSV export of what is on screen;
+  * CLAIM — the page's only write: `claimedBy` on one `TeamCard`, sent as a
+    conflict-checked UPDATE (only that field; refused if the card changed).
+
+Safety: the private database also holds the person's own card library, so
+the page opens only `team-…` zones. Card text is untrusted: textContent
+only; websites must parse as http(s); CSV cells that could be formulas are
+prefixed. CSP allows scripts from this site and Apple's CDN only.
+
+`/spike/` forwards here (the first read-only test lived there).
