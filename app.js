@@ -8,7 +8,9 @@
 // (SwiftData's zone). This page only ever opens "team-…" zones, and its
 // one write is Claim: `claimedBy` on a single TeamCard, as a conflict-
 // checked UPDATE (only that field changes; if someone else changed the
-// card first, CloudKit refuses and nothing is overwritten).
+// card first, CloudKit refuses and nothing is overwritten). JOIN accepts
+// an invite for the signed-in Apple ID — only possible when the team's
+// owner added that Apple ID (invite-only share).
 //
 // ⚠️ Card text is untrusted input: always textContent, never innerHTML.
 
@@ -19,6 +21,7 @@
   const $ = (id) => document.getElementById(id);
   const TEAM_PREFIX = "team-";
   const NAME_KEY = "cardlio.team.claimName";
+  const PENDING_KEY = "cardlio.team.pendingInvite";
 
   const state = {
     teams: [],          // { id, zoneID, db, owned, name, records: [...] }
@@ -135,6 +138,26 @@
 
   function storageGet(key) { try { return localStorage.getItem(key) || ""; } catch (e) { return ""; } }
   function storageSet(key, v) { try { localStorage.setItem(key, v); } catch (e) { /* private mode */ } }
+  function sessionGet(key) { try { return sessionStorage.getItem(key) || ""; } catch (e) { return ""; } }
+  function sessionSet(key, v) { try { if (v) sessionStorage.setItem(key, v); else sessionStorage.removeItem(key); } catch (e) { /* private mode */ } }
+
+  // An iCloud invite link: https://www.icloud.com/share/<shortGUID>#Title.
+  // The short GUID is what CloudKit accepts; a bare GUID is taken too.
+  function inviteGUID(text) {
+    const s = (text || "").trim();
+    const m = s.match(/icloud\.com\/share\/([A-Za-z0-9_-]{6,})/i) || s.match(/^([A-Za-z0-9_-]{10,})$/);
+    return m ? m[1] : "";
+  }
+
+  // team.cardlio.app/#join=<invite link or GUID>: remembered for this tab,
+  // so it survives Apple's sign-in, then offered once signed in.
+  (function takeInviteFromURL() {
+    const raw = new URLSearchParams(location.hash.slice(1)).get("join");
+    if (!raw) return;
+    const guid = inviteGUID(raw);
+    if (guid) sessionSet(PENDING_KEY, guid);
+    history.replaceState(null, "", location.pathname + location.search);
+  })();
 
   function safeWebURL(raw) {
     let s = (raw || "").trim();
@@ -234,6 +257,7 @@
     document.title = "cardlio Team";
     document.body.classList.add("signed-out");
     $("welcome").hidden = false;
+    $("invite-banner").hidden = !sessionGet(PENDING_KEY);
     $("app").hidden = true;
     $("refresh").hidden = true;
     state.teams = [];
@@ -270,6 +294,8 @@
       $("loading-teams").hidden = true;
     }
     renderTeamNav();
+    const pending = sessionGet(PENDING_KEY);
+    if (pending) { sessionSet(PENDING_KEY, ""); openJoin(pending); }
     if (!state.teams.length) {
       $("no-teams").hidden = false;
       $("team-view").hidden = true;
@@ -618,6 +644,131 @@
     renderTeamNav();
     if (state.team === team) renderTeam();
   }
+
+  // ------------------------------------------------------------------ join
+
+  let joinGUID = "";
+  let joinSeq = 0;
+
+  function joinError(text) {
+    $("j-error").textContent = text;
+    $("j-error").hidden = !text;
+  }
+
+  // What CloudKit's errors mean to someone holding an invite link.
+  function inviteProblem(code) {
+    if (/ACCESS_DENIED|NOT_FOUND|UNKNOWN_ITEM|PARTICIPANT|SHARE/i.test(code || "")) {
+      return "This invite isn't for the Apple ID you're signed in with, or the team no longer exists. " +
+        "Ask the team's owner to add this Apple ID in the cardlio app, then use the link again.";
+    }
+    if (/AUTHENTICATION/i.test(code || "")) return "Your sign-in expired. Sign in again, then use the link again.";
+    return "iCloud could not open this invite (" + (code || "unknown error") + ").";
+  }
+
+  function resultOf(response) {
+    const r = response && response.results && response.results[0];
+    return r || null;
+  }
+  function shareTitle(r) {
+    const t = r && r.share && r.share.fields && r.share.fields["cloudkit.title"];
+    return (t && t.value) || "";
+  }
+  function ownerName(r) {
+    const n = r && r.ownerIdentity && r.ownerIdentity.nameComponents;
+    return n ? [n.givenName, n.familyName].filter(Boolean).join(" ") : "";
+  }
+  function resultZone(r) {
+    return (r && r.zoneID && r.zoneID.zoneName) ||
+           (r && r.share && r.share.zoneID && r.share.zoneID.zoneName) || "";
+  }
+
+  function openJoin(prefill) {
+    joinGUID = "";
+    joinError("");
+    $("j-preview").hidden = true;
+    $("j-go").disabled = true;
+    $("j-link").value = prefill ? "https://www.icloud.com/share/" + prefill : "";
+    if (!$("join-dialog").open) $("join-dialog").showModal();
+    $("j-link").focus();
+    if (prefill) previewInvite();
+  }
+
+  async function previewInvite() {
+    const guid = inviteGUID($("j-link").value);
+    const seq = ++joinSeq;
+    joinGUID = guid;
+    joinError("");
+    $("j-preview").hidden = true;
+    $("j-go").disabled = !guid;
+    if (!guid) {
+      if ($("j-link").value.trim()) joinError("That doesn't look like an invite link. It should start with https://www.icloud.com/share/");
+      return;
+    }
+    try {
+      const response = await container.fetchRecordInfos([guid]);
+      if (seq !== joinSeq) return;
+      const r = resultOf(response);
+      console.info("[team] invite preview", r ? Object.keys(r) : response);
+      if (!r || r.serverErrorCode) { joinError(inviteProblem(r && r.serverErrorCode)); return; }
+      const title = shareTitle(r) || "A cardlio team";
+      const preview = $("j-preview");
+      preview.replaceChildren();
+      preview.append(el("span", "avatar", initials(title)));
+      const text = el("div");
+      text.append(el("b", null, title));
+      const owner = ownerName(r);
+      const already = r.participantStatus === "ACCEPTED";
+      text.append(el("small", null, already ? "You're already on this team." : (owner ? "Invited by " + owner : "Invite for this Apple ID")));
+      preview.append(text);
+      preview.hidden = false;
+      if (already) $("j-go").textContent = "Open team";
+    } catch (e) {
+      if (seq !== joinSeq) return;
+      // A preview is a nicety: joining may still work, so keep the button.
+      console.info("[team] invite preview failed", e);
+    }
+  }
+
+  let previewTimer;
+  $("j-link").addEventListener("input", () => {
+    $("j-go").textContent = "Join team";
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(previewInvite, 350);
+  });
+  $("j-cancel").addEventListener("click", () => $("join-dialog").close());
+  for (const id of ["join-open", "join-open-empty", "join-open-mobile"]) {
+    $(id).addEventListener("click", () => openJoin(""));
+  }
+
+  $("join-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const guid = joinGUID || inviteGUID($("j-link").value);
+    if (!guid) { joinError("Paste the invite link first."); return; }
+    $("j-go").disabled = true;
+    joinError("");
+    try {
+      const response = await container.acceptShares([guid]);
+      const r = resultOf(response);
+      console.info("[team] accept", r ? Object.keys(r) : response);
+      const code = (r && r.serverErrorCode) || (response.hasErrors && response.errors[0] && (response.errors[0].ckErrorCode || response.errors[0].serverErrorCode));
+      if (!r || code) { joinError(inviteProblem(code)); return; }
+      const zone = resultZone(r);
+      $("join-dialog").close();
+      await load();
+      const team = state.teams.find((t) => t.id === zone) ||
+                   state.teams.find((t) => !t.owned && t.name === shareTitle(r));
+      if (team) {
+        selectTeam(team);
+        toast("You joined " + team.name + ".");
+      } else {
+        showAlert("You joined the team, but it isn't showing here yet. Reload in a minute; if it still doesn't appear, open it in the cardlio app on an iPhone or Mac.");
+      }
+    } catch (err) {
+      joinError(inviteProblem(err && (err.ckErrorCode || err.serverErrorCode)) + (err && err.reason ? " " + err.reason : ""));
+    } finally {
+      $("j-go").disabled = false;
+    }
+  });
 
   // ---------------------------------------------------------------- export
 

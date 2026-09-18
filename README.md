@@ -25,7 +25,12 @@ this origin), then:
     Apple Maps links;
   * vCard per card (photo embedded when the image host allows it), vCard or
     CSV export of what is on screen;
-  * CLAIM — the page's only write: `claimedBy` on one `TeamCard`, sent as a
+  * JOIN a team from its iCloud invite link (pasted, or
+    `team.cardlio.app/#join=<link>`, kept through Apple's sign-in):
+    `fetchRecordInfos` previews it, `acceptShares` accepts it for the
+    signed-in Apple ID — which must be on the team's list (invite-only).
+    This is what lets someone without an iPhone or Mac join.
+  * CLAIM — the page's only write to a team: `claimedBy` on one `TeamCard`, sent as a
     conflict-checked UPDATE (only that field; refused if the card changed).
 
 Safety: the private database also holds the person's own card library, so
