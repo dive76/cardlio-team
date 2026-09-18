@@ -125,6 +125,29 @@
           team.share = /NOT_FOUND|UNKNOWN_ITEM|ZONE_NOT_FOUND/i.test(errorText(e)) ? "absent" : "unknown";
           log(team.zoneID.zoneName, "share lookup threw:", errorText(e));
         }
+        // Diagnostic: read the zone itself — which record types it holds,
+        // and whether a share shows up among them, and under what name.
+        try {
+          const changes = await db.fetchRecordZoneChanges([{ zoneID: zone.zoneID }]);
+          const z = changes.zones && changes.zones[0];
+          const counts = {};
+          for (const r of (z && z.records) || []) {
+            counts[r.recordType] = (counts[r.recordType] || 0) + 1;
+            if (r.recordType !== "TeamCard") {
+              log("   ", team.zoneID.zoneName, "record", r.recordType, "named", r.recordName,
+                  r.recordType === "cloudkit.share" ? "fields " + JSON.stringify(Object.keys(r.fields || {})) : "");
+              if (r.recordType === "cloudkit.share" && team.share !== "present") {
+                team.share = "present (found in zone)";
+                const title = field(r, "cloudkit.title");
+                if (title) team.name = title;
+              }
+            }
+          }
+          team.cardCount = counts.TeamCard || 0;
+          log("   ", team.zoneID.zoneName, "holds", JSON.stringify(counts), changes.hasErrors ? "errors " + changes.errors.map(errorText) : "");
+        } catch (e) {
+          log("   ", team.zoneID.zoneName, "zone read failed:", errorText(e));
+        }
         teams.push(team);
       }
     }
@@ -149,7 +172,8 @@
       // Diagnostic while this is a test: a zone without its share is what
       // a deleted team leaves behind. Shown, not hidden, so the lookup
       // itself can be checked against what the app lists.
-      if (team.share !== "present") bits.push("share " + team.share + " (likely a deleted team)");
+      if (team.cardCount != null) bits.push(team.cardCount + (team.cardCount === 1 ? " card" : " cards"));
+      if (!String(team.share).startsWith("present")) bits.push("share " + team.share + " (likely a deleted team)");
       if (team.participants != null) bits.push(team.participants + " on the share");
       button.append(el("small", null, bits.join(" · ")));
       button.addEventListener("click", () => {

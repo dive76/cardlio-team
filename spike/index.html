@@ -9,7 +9,7 @@
      Apple's iCloud. Card text is untrusted input: it is only ever set
      with textContent, never as HTML. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.apple-cloudkit.com; connect-src 'self' https://*.apple-cloudkit.com https://*.icloud.com https://*.icloud-content.com; img-src 'self' data: blob: https://*.icloud-content.com https://*.apple-cloudkit.com https://*.apple.com; style-src 'self' 'unsafe-inline'; frame-src https://*.apple-cloudkit.com https://*.apple.com https://*.icloud.com; font-src 'self' https://*.apple-cloudkit.com; base-uri 'none'; form-action 'none'">
-<link rel="stylesheet" href="spike.css?v=4">
+<link rel="stylesheet" href="spike.css?v=5">
 </head>
 <body>
 <header>
@@ -36,8 +36,8 @@
   </details>
 </main>
 <p class="foot">Read-only test. This page talks only to Apple's iCloud, after you sign in with your Apple ID. It reads team zones and nothing else, and changes nothing.</p>
-<script src="config.js?v=4"></script>
+<script src="config.js?v=5"></script>
 <script src="https://cdn.apple-cloudkit.com/ck/2/cloudkit.js"></script>
-<script src="spike.js?v=4"></script>
+<script src="spike.js?v=5"></script>
 </body>
 </html>
