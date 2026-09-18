@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>cardlio Team</title>
+<meta name="description" content="The cardlio team library in your browser. Coming soon.">
+<meta name="robots" content="noindex">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%234F46E5'/%3E%3Cstop offset='1' stop-color='%238B5CF6'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='url(%23g)'/%3E%3Crect x='12' y='20' width='40' height='26' rx='5' fill='white' transform='rotate(-6 32 33)'/%3E%3C/svg%3E">
+<style>
+  /* Placeholder until the team page exists. Self-contained on purpose:
+     no request leaves this site until the real page adds Apple's CloudKit. */
+  @font-face {
+    font-family: "Space Grotesk";
+    font-style: normal;
+    font-weight: 300 700;
+    font-display: swap;
+    src: url("assets/fonts/space-grotesk-vf.woff2") format("woff2-variations");
+  }
+  :root {
+    --font-display: "Space Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --indigo: #4F46E5;
+    --violet: #8B5CF6;
+    --bg: #12101f;
+    --ink: #f0f0f6;
+    --muted: #9ea3b5;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  body {
+    background: radial-gradient(1200px 600px at 20% -10%, rgba(79,70,229,.35), transparent 60%),
+                radial-gradient(900px 500px at 110% 110%, rgba(139,92,246,.28), transparent 60%),
+                var(--bg);
+    color: var(--ink);
+    font: 17px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    display: grid;
+    place-items: center;
+    padding: 24px 16px;
+  }
+  main { max-width: 520px; text-align: center; }
+  .mark { font-family: var(--font-display); font-weight: 700; font-size: 20px; color: #c7c2ff; letter-spacing: -.01em; }
+  h1 {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: clamp(36px, 8vw, 56px);
+    line-height: 1.05;
+    letter-spacing: -.02em;
+    margin: 18px 0 16px;
+    text-wrap: balance;
+  }
+  h1 span {
+    background: linear-gradient(90deg, #a5a0ff, var(--violet));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  p { color: var(--muted); text-wrap: pretty; }
+  a { color: #c7c2ff; }
+  .back { display: inline-block; margin-top: 28px; font-weight: 600; text-decoration: none; }
+  .back:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<main>
+  <div class="mark">cardlio</div>
+  <h1>Your team library, <span>in the browser.</span></h1>
+  <p>Soon you'll be able to see your team's cards here, from any computer, after signing in with your Apple&nbsp;ID. Until then, the team library lives in the cardlio app on iPhone and Mac.</p>
+  <a class="back" href="https://cardlio.app/">cardlio.app →</a>
+</main>
+</body>
+</html>
