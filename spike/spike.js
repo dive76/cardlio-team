@@ -15,7 +15,6 @@
   const cfg = window.CARDLIO_TEAM_CONFIG || {};
   const $ = (id) => document.getElementById(id);
   const TEAM_PREFIX = "team-";
-  const SHARE_RECORD = "cloudkit.zoneshare";
 
   function log(...parts) {
     const line = parts.map((p) => (typeof p === "string" ? p : JSON.stringify(p))).join(" ");
@@ -88,8 +87,11 @@
     loadTeams();
   }
 
-  // Teams = zones named team-… that still carry their zone-wide share
-  // (the apps' own rule: a zone without its share is a deleted team's husk).
+  // A team = a "team-…" zone holding a TeamInfo record, which carries its
+  // name. The apps name a team by its zone-wide share, but the web API
+  // cannot see zone-wide shares (NOT_FOUND on every team, 2026-09-18), so
+  // the apps also write TeamInfo. A deleted team's leftover zone has no
+  // records, so it drops out here.
   async function loadTeams() {
     status("Looking for teams…");
     const teams = [];
@@ -105,50 +107,23 @@
       const zones = (response.zones || []).filter((z) => z.zoneID.zoneName.startsWith(TEAM_PREFIX));
       log(label, "database:", (response.zones || []).length, "zone(s),", zones.length, "team zone(s)");
       for (const zone of zones) {
-        const team = { zoneID: zone.zoneID, db, owned, label, name: zone.zoneID.zoneName, share: "unknown" };
-        try {
-          const r = await db.fetchRecords([{ recordName: SHARE_RECORD, zoneID: zone.zoneID }]);
-          const share = r.records && r.records[0];
-          const errs = (r.errors || []).map(errorText);
-          if (share && !share.serverErrorCode) {
-            team.share = "present";
-            const title = field(share, "cloudkit.title");
-            if (title) team.name = title;
-            team.participants = (share.participants || []).length;
-            log(team.zoneID.zoneName, "share present, type", share.recordType, "fields", Object.keys(share.fields || {}));
-          } else {
-            const code = (share && share.serverErrorCode) || errs.join("; ") || "no record returned";
-            team.share = /NOT_FOUND|UNKNOWN_ITEM|ZONE_NOT_FOUND/i.test(code) ? "absent" : "unknown";
-            log(team.zoneID.zoneName, "share", team.share + ":", code);
-          }
-        } catch (e) {
-          team.share = /NOT_FOUND|UNKNOWN_ITEM|ZONE_NOT_FOUND/i.test(errorText(e)) ? "absent" : "unknown";
-          log(team.zoneID.zoneName, "share lookup threw:", errorText(e));
-        }
-        // Diagnostic: read the zone itself — which record types it holds,
-        // and whether a share shows up among them, and under what name.
+        const id = zone.zoneID.zoneName;
         try {
           const changes = await db.fetchRecordZoneChanges([{ zoneID: zone.zoneID }]);
-          const z = changes.zones && changes.zones[0];
-          const counts = {};
-          for (const r of (z && z.records) || []) {
-            counts[r.recordType] = (counts[r.recordType] || 0) + 1;
-            if (r.recordType !== "TeamCard") {
-              log("   ", team.zoneID.zoneName, "record", r.recordType, "named", r.recordName,
-                  r.recordType === "cloudkit.share" ? "fields " + JSON.stringify(Object.keys(r.fields || {})) : "");
-              if (r.recordType === "cloudkit.share" && team.share !== "present") {
-                team.share = "present (found in zone)";
-                const title = field(r, "cloudkit.title");
-                if (title) team.name = title;
-              }
-            }
+          if (changes.hasErrors) throw changes.errors[0];
+          const records = (changes.zones && changes.zones[0] && changes.zones[0].records) || [];
+          const info = records.find((r) => r.recordType === "TeamInfo" && !r.deleted);
+          const cards = records.filter((r) => r.recordType === "TeamCard" && !r.deleted).length;
+          if (!info) {
+            log("   ", id, "no TeamInfo,", cards, "card(s):", cards ? "a team from before TeamInfo" : "a deleted team's leftover");
+            if (!cards) continue;
           }
-          team.cardCount = counts.TeamCard || 0;
-          log("   ", team.zoneID.zoneName, "holds", JSON.stringify(counts), changes.hasErrors ? "errors " + changes.errors.map(errorText) : "");
+          const name = (info && field(info, "name")) || id;
+          log("   ", id, "=", JSON.stringify(name) + ",", cards, "card(s)");
+          teams.push({ zoneID: zone.zoneID, db, owned, label, name, cardCount: cards, named: !!info });
         } catch (e) {
-          log("   ", team.zoneID.zoneName, "zone read failed:", errorText(e));
+          log("   ", id, "zone read failed:", errorText(e));
         }
-        teams.push(team);
       }
     }
     showTeams(teams);
@@ -169,12 +144,8 @@
       const button = el("button");
       button.append(el("span", null, team.name));
       const bits = [team.owned ? "Yours" : "Joined", team.label + " database"];
-      // Diagnostic while this is a test: a zone without its share is what
-      // a deleted team leaves behind. Shown, not hidden, so the lookup
-      // itself can be checked against what the app lists.
-      if (team.cardCount != null) bits.push(team.cardCount + (team.cardCount === 1 ? " card" : " cards"));
-      if (!String(team.share).startsWith("present")) bits.push("share " + team.share + " (likely a deleted team)");
-      if (team.participants != null) bits.push(team.participants + " on the share");
+      bits.push(team.cardCount + (team.cardCount === 1 ? " card" : " cards"));
+      if (!team.named) bits.push("name not synced yet: open the team library in the app");
       button.append(el("small", null, bits.join(" · ")));
       button.addEventListener("click", () => {
         list.querySelectorAll("button").forEach((b) => b.removeAttribute("aria-current"));
