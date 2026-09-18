@@ -9,5 +9,5 @@
 window.CARDLIO_TEAM_CONFIG = {
   containerIdentifier: "iCloud.gruenitz.CardOCR",
   environment: "production",
-  apiToken: "63c3ec009619493a60bbd80fc339043c85acec2eb8080399bed68d3c83e45447"
+  apiToken: "5eaae7c31e30ec4b88fb359cf3e582c905a312741b53e14166b0afd0410ae521"
 };
