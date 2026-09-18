@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>cardlio Team (test)</title>
+<meta name="robots" content="noindex">
+<!-- Scripts only from this site and Apple's CloudKit CDN; data only to
+     Apple's iCloud. Card text is untrusted input: it is only ever set
+     with textContent, never as HTML. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.apple-cloudkit.com; connect-src 'self' https://*.apple-cloudkit.com https://*.icloud.com https://*.icloud-content.com; img-src 'self' data: blob: https://*.icloud-content.com https://*.apple-cloudkit.com https://*.apple.com; style-src 'self' 'unsafe-inline'; frame-src https://*.apple-cloudkit.com https://*.apple.com https://*.icloud.com; font-src 'self' https://*.apple-cloudkit.com; base-uri 'none'; form-action 'none'">
+<link rel="stylesheet" href="spike.css">
+</head>
+<body>
+<header>
+  <div class="mark">cardlio <span>team · test</span></div>
+  <div class="auth">
+    <div id="apple-sign-in-button"></div>
+    <div id="apple-sign-out-button"></div>
+  </div>
+</header>
+<main>
+  <p id="status" class="status">Loading…</p>
+  <section id="teams" hidden>
+    <h2>Your teams</h2>
+    <ul id="team-list" class="team-list"></ul>
+  </section>
+  <section id="cards" hidden>
+    <h2 id="team-title"></h2>
+    <p id="team-meta" class="meta"></p>
+    <ul id="card-list" class="card-list"></ul>
+  </section>
+  <details id="log-box">
+    <summary>Technical log</summary>
+    <pre id="log"></pre>
+  </details>
+</main>
+<p class="foot">Read-only test. This page talks only to Apple's iCloud, after you sign in with your Apple ID. It reads team zones and nothing else, and changes nothing.</p>
+<script src="config.js"></script>
+<script src="https://cdn.apple-cloudkit.com/ck/2/cloudkit.js"></script>
+<script src="spike.js"></script>
+</body>
+</html>
