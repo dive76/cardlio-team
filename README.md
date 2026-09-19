@@ -49,5 +49,10 @@ prefixed. CSP allows scripts from this site and Apple's CDN only.
 - **Deep links**: `#team=<zone>&card=<recordName>` opens a card; **Copy link** in the detail.
 - **Installable** (web manifest + a small service worker for the shell; every iCloud call stays on the network).
 - Join a team from an invite link.
+- **Add a card** by hand (a member on Windows meets people too) — a `TeamCard` record with `scannedBy` = their name; **Edit** a card for the whole team (only the changed fields are sent; claimed copies in libraries are separate).
+- **Everything (ZIP)**: the vCards with photos, the CSV and each card photo as a JPEG — a stored ZIP written in the page.
+- **Dashboard**: unclaimed and who claimed how many, who shared how many, the last seven days as bars.
+- **Keyboard**: `/` to search, arrows / Home / End across the cards, Enter opens.
+- **Possible duplicate**: the apps' detector rule (a personal e-mail at the same company, or the same name + company) flags two cards of one visitor and links them.
 
-Writes are limited to `claimedBy` on one `TeamCard` (a conflict-checked update) and accepting an invite.
+Writes: `claimedBy` on a `TeamCard` (claim and release), creating a `TeamCard`, editing a `TeamCard`'s fields — each a conflict-checked batch — and accepting an invite.

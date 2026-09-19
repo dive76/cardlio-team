@@ -398,21 +398,42 @@
     if (!team.named) sub.push("Open the team library in the cardlio app once to show this team's name here");
     $("team-sub").textContent = sub.join(" · ");
 
+    state.dupes = duplicateMap(records);
     const claimed = records.filter((r) => str(r, "claimedBy")).length;
-    const people = new Set(records.map((r) => str(r, "scannedBy")).filter(Boolean));
-    const latest = records.reduce((m, r) => Math.max(m, scannedAt(r)), 0);
     const stats = $("stats");
     stats.replaceChildren();
-    for (const [k, v, small] of [
-      ["Cards", String(records.length)],
-      ["Unclaimed", String(records.length - claimed)],
-      ["Shared by", people.size ? [...people].join(", ") : "—", true],
-      ["Latest", latest ? when(latest) : "—", true]
-    ]) {
-      const s = el("div", "stat");
-      s.append(el("div", "k", k), el("div", small ? "v small" : "v", v));
-      stats.append(s);
-    }
+    // The dashboard: how much is in, how much is open and who holds it,
+    // who contributed how much, and the last seven days as bars.
+    const count = (get) => {
+      const m = new Map();
+      for (const r of records) { const k = get(r); if (k) m.set(k, (m.get(k) || 0) + 1); }
+      return [...m.entries()].sort((a, b) => b[1] - a[1]);
+    };
+    const peopleCell = (pairs) => {
+      const v = el("div", "v people");
+      if (!pairs.length) v.textContent = "—";
+      for (const [name, n] of pairs) { const s = el("span"); s.append(el("b", null, String(n)), " " + name); v.append(s); }
+      return v;
+    };
+    const s1 = el("div", "stat"); s1.append(el("div", "k", "Cards"), el("div", "v", String(records.length))); stats.append(s1);
+    const s2 = el("div", "stat");
+    s2.append(el("div", "k", claimed ? "Unclaimed · claimed by" : "Unclaimed"), el("div", "v", String(records.length - claimed)));
+    if (claimed) s2.append(peopleCell(count((r) => str(r, "claimedBy"))));
+    stats.append(s2);
+    const s3 = el("div", "stat"); s3.append(el("div", "k", "Shared by"), peopleCell(count((r) => str(r, "scannedBy")))); stats.append(s3);
+    const s4 = el("div", "stat");
+    const dayMs = 86400000, today = Math.floor(Date.now() / dayMs);
+    const perDay = new Array(7).fill(0);
+    for (const r of records) { const d = today - Math.floor(scannedAt(r) / dayMs); if (d >= 0 && d < 7) perDay[6 - d]++; }
+    const week = perDay.reduce((a, b) => a + b, 0), peak = Math.max(...perDay, 1);
+    s4.append(el("div", "k", "Last 7 days"), el("div", "v", String(week)));
+    const bars = el("div", "bars");
+    for (const n of perDay) { const i = el("i", n ? null : "zero"); i.style.height = (n ? Math.max(12, Math.round(100 * n / peak)) : 6) + "%"; i.title = plural(n, "card"); bars.append(i); }
+    s4.append(bars);
+    const days = el("div", "days");
+    days.append(el("span", null, dateFmt.format(new Date((today - 6) * dayMs))), el("span", null, "today"));
+    s4.append(days);
+    stats.append(s4);
 
     const events = [...new Set(records.map((r) => str(r, "eventTag")).filter(Boolean))].sort();
     const chips = $("event-chips");
@@ -495,6 +516,7 @@
     const by = str(r, "scannedBy");
     foot.append(el("span", null, [by, when(scannedAt(r))].filter(Boolean).join(" · ")));
     const claimedBy = str(r, "claimedBy");
+    if (state.dupes && state.dupes.has(r.recordName)) foot.append(el("span", "status dupe", "Possible duplicate"));
     foot.append(el("span", claimedBy ? "status taken" : "status open", claimedBy ? "Claimed" : "Unclaimed"));
     tb.append(foot);
     b.append(ph, tb);
@@ -570,6 +592,24 @@
     $("d-notes").hidden = !notes;
     $("d-notes").textContent = notes;
 
+    // The same person shared twice (two colleagues scanned the same
+    // visitor) — say so, and link the other card.
+    const dupe = $("d-dupe");
+    dupe.replaceChildren();
+    const others = (state.dupes && state.dupes.get(r.recordName)) || [];
+    dupe.hidden = !others.length;
+    if (others.length) {
+      dupe.append("Looks like the same person as ");
+      others.forEach((o, i) => {
+        const b = el("button", null, displayName(o) + (str(o, "scannedBy") ? " (shared by " + str(o, "scannedBy") + ")" : ""));
+        b.type = "button";
+        b.addEventListener("click", () => openDetail(o));
+        if (i) dupe.append(", ");
+        dupe.append(b);
+      });
+      dupe.append(". Claim one; the team keeps both.");
+    }
+
     const by = str(r, "scannedBy");
     $("d-prov").textContent = "Shared " + [by ? "by " + by : "", when(scannedAt(r)) ? "on " + when(scannedAt(r)) : ""].filter(Boolean).join(" ") + " into " + state.team.name + ".";
 
@@ -613,6 +653,12 @@
       claim.addEventListener("click", () => askClaim(r));
       actions.append(claim, dl);
     }
+    const ed = el("button", "btn");
+    ed.type = "button";
+    ed.append(el("span", null, "Edit"));
+    ed.title = "Fix a typo in this card for the whole team";
+    ed.addEventListener("click", () => openCardForm(r));
+    actions.append(ed);
     const link = el("button", "btn");
     link.type = "button";
     link.append(el("span", null, "Copy link"));
@@ -998,15 +1044,231 @@
     return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   }
   function downloadCSV(records) {
+    saveFile(fileSafe(state.team.name) + ".csv", "text/csv;charset=utf-8", csvText(records));
+  }
+  function csvText(records) {
     const head = ["First name", "Last name", "Title", "Company", "Emails", "Phone", "Mobile", "Website",
       "Street", "Unit", "Postal code", "City", "Country", "Event", "Notes", "Shared by", "Shared on", "Claimed by"];
     const rows = records.map((r) => [str(r, "firstName"), str(r, "lastName"), str(r, "title"), str(r, "company"),
       emails(r).join("; "), str(r, "phone"), str(r, "mobile"), str(r, "website"), str(r, "street"), str(r, "unit"),
       str(r, "postalCode"), str(r, "city"), str(r, "country"), str(r, "eventTag"), str(r, "notes"), str(r, "scannedBy"),
       scannedAt(r) ? new Date(scannedAt(r)).toISOString().slice(0, 10) : "", str(r, "claimedBy")]);
-    const csv = "\ufeff" + [head, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n") + "\r\n";
-    saveFile(fileSafe(state.team.name) + ".csv", "text/csv;charset=utf-8", csv);
+    return "\ufeff" + [head, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n") + "\r\n";
   }
+
+  // ------------------------------------------------------------ duplicates
+  //
+  // The same rule as the apps' DuplicateDetector: an e-mail whose local
+  // part carries the person's first or last name (a role address like
+  // info@ never does), scoped to the company; or the same first + last +
+  // company. One shared key groups two cards.
+  function duplicateKeys(r) {
+    const first = fold(str(r, "firstName")).replace(/\s+/g, ""), last = fold(str(r, "lastName")).replace(/\s+/g, "");
+    const company = fold(str(r, "company"));
+    const keys = [];
+    for (const e of emails(r)) {
+      const lower = e.toLowerCase();
+      const at = lower.indexOf("@");
+      if (at < 0) continue;
+      const local = lower.slice(0, at).replace(/[._-]/g, "");
+      if ((first.length >= 2 && local.includes(first)) || (last.length >= 2 && local.includes(last))) keys.push("email:" + lower + "|" + company);
+    }
+    if (first || last) keys.push("name:" + first + "|" + last + "|" + company);
+    return keys;
+  }
+  function duplicateMap(records) {
+    const byKey = new Map();
+    for (const r of records) for (const k of duplicateKeys(r)) { if (!byKey.has(k)) byKey.set(k, []); byKey.get(k).push(r); }
+    const map = new Map();
+    for (const group of byKey.values()) {
+      if (group.length < 2) continue;
+      for (const r of group) {
+        const others = map.get(r.recordName) || [];
+        for (const o of group) if (o !== r && !others.includes(o)) others.push(o);
+        map.set(r.recordName, others);
+      }
+    }
+    return map;
+  }
+
+  // ------------------------------------------------------- add / edit card
+  //
+  // A member on Windows meets people too: a card typed in lands in the
+  // team as a TeamCard record, `scannedBy` = their name, exactly what the
+  // apps show for a shared card. Editing fixes a typo for the whole team
+  // (the record only; a colleague's claimed copy in their own library is
+  // separate). Both are conflict-checked like a claim.
+  const FORM_FIELDS = ["firstName", "lastName", "title", "company", "emails", "phone", "mobile", "website",
+    "street", "unit", "postalCode", "city", "country", "eventTag", "notes"];
+  let editing = null;
+  function openCardForm(r) {
+    editing = r || null;
+    const form = $("card-form");
+    form.reset();
+    $("f-error").hidden = true;
+    $("f-title").textContent = r ? "Edit card" : "Add a card";
+    $("f-text").textContent = r
+      ? "Changes the card for the whole team. Copies colleagues already claimed into their own libraries stay as they are."
+      : "Someone you met without a card to scan. The team sees it like any shared card.";
+    $("f-go").textContent = r ? "Save" : "Add to team";
+    $("f-by-label").hidden = !!r;
+    if (r) for (const k of FORM_FIELDS) form.elements[k].value = k === "emails" ? emails(r).join(", ") : str(r, k);
+    else form.elements.scannedBy.value = myName();
+    $("card-dialog").showModal();
+    form.elements.firstName.focus();
+  }
+  $("add-card").addEventListener("click", () => openCardForm(null));
+  $("f-cancel").addEventListener("click", () => $("card-dialog").close());
+  $("card-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const form = $("card-form");
+    const v = (k) => form.elements[k].value.trim();
+    const fields = {};
+    for (const k of FORM_FIELDS) {
+      if (k === "emails") fields.emails = { value: v("emails").split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean), type: "STRING_LIST" };
+      else fields[k] = { value: v(k), type: "STRING" };
+    }
+    if (!fields.firstName.value && !fields.lastName.value && !fields.company.value) {
+      $("f-error").textContent = "A name or a company, at least."; $("f-error").hidden = false; return;
+    }
+    $("f-go").disabled = true;
+    try {
+      if (editing) {
+        await updateCard(editing, fields);
+        toast("Saved for the team");
+      } else {
+        const by = v("scannedBy") || "Someone";
+        storageSet(NAME_KEY, by);
+        await createCard(fields, by);
+        toast("Added to " + state.team.name);
+      }
+      $("card-dialog").close();
+      renderTeamNav();
+      renderTeam();
+      if (editing && state.open === editing) openDetail(editing);
+    } catch (err) {
+      $("f-error").textContent = err.message || errorText(err);
+      $("f-error").hidden = false;
+    } finally {
+      $("f-go").disabled = false;
+    }
+  });
+
+  async function createCard(fields, by) {
+    const team = state.team;
+    const id = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())).toUpperCase();
+    const batch = team.db.newRecordsBatch({ zoneID: team.zoneID });
+    batch.create([{
+      recordType: "TeamCard",
+      recordName: id,
+      fields: Object.assign({
+        cardID: { value: id, type: "STRING" },
+        scannedBy: { value: by, type: "STRING" },
+        scannedAt: { value: Date.now(), type: "TIMESTAMP" },
+        claimedBy: { value: "", type: "STRING" }
+      }, fields)
+    }]);
+    const response = await batch.commit();
+    if (response.hasErrors) throw new Error("Could not add the card: " + errorText(response.errors[0]));
+    const saved = (response.records && response.records[0]) || {};
+    const record = { recordName: id, recordType: "TeamCard", recordChangeTag: saved.recordChangeTag || "", fields: {} };
+    for (const [k, f] of Object.entries(Object.assign({
+      cardID: { value: id }, scannedBy: { value: by }, scannedAt: { value: Date.now() }, claimedBy: { value: "" }
+    }, fields))) record.fields[k] = { value: f.value, type: f.type };
+    team.records.push(record);
+  }
+
+  async function updateCard(r, fields) {
+    const team = state.team;
+    const changed = {};
+    for (const [k, f] of Object.entries(fields)) {
+      const before = k === "emails" ? emails(r).join("\u0001") : str(r, k);
+      const after = k === "emails" ? f.value.join("\u0001") : f.value;
+      if (before !== after) changed[k] = f;
+    }
+    if (!Object.keys(changed).length) return;
+    const batch = team.db.newRecordsBatch({ zoneID: team.zoneID });
+    batch.update([{ recordType: r.recordType, recordName: r.recordName, recordChangeTag: r.recordChangeTag, fields: changed }]);
+    const response = await batch.commit();
+    if (response.hasErrors) {
+      const err = response.errors[0];
+      const code = err.ckErrorCode || err.serverErrorCode || "";
+      if (/CONFLICT|ATOMIC/.test(code)) {
+        await refreshTeam(team);
+        throw new Error("Someone changed this card a moment ago. It has been reloaded; open it again to edit.");
+      }
+      throw new Error("Could not save: " + errorText(err));
+    }
+    const saved = response.records && response.records[0];
+    for (const [k, f] of Object.entries(changed)) r.fields[k] = { value: f.value, type: f.type };
+    if (saved && saved.recordChangeTag) r.recordChangeTag = saved.recordChangeTag;
+  }
+
+  // ---------------------------------------------------------------- ZIP
+  //
+  // "Everything": the vCards with photos, the CSV and each card photo as a
+  // JPEG, for handing a fair's haul to whoever loads the CRM. Stored, not
+  // compressed — the photos are JPEGs already — so this is the ZIP format
+  // in ~40 lines: local headers, a central directory, an end record.
+  const CRC_TABLE = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+  function crc32(bytes) { let c = 0xFFFFFFFF; for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+  function zipStore(entries) {
+    const enc = new TextEncoder(), parts = [], central = [];
+    let offset = 0;
+    const u16 = (n) => [n & 0xFF, (n >>> 8) & 0xFF], u32 = (n) => [n & 0xFF, (n >>> 8) & 0xFF, (n >>> 16) & 0xFF, (n >>> 24) & 0xFF];
+    const now = new Date(), dosTime = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1);
+    const dosDate = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+    for (const { name, data } of entries) {
+      const n = enc.encode(name), crc = crc32(data);
+      const head = new Uint8Array([...u32(0x04034b50), ...u16(20), ...u16(0x0800), ...u16(0), ...u16(dosTime), ...u16(dosDate), ...u32(crc), ...u32(data.length), ...u32(data.length), ...u16(n.length), ...u16(0)]);
+      parts.push(head, n, data);
+      central.push(new Uint8Array([...u32(0x02014b50), ...u16(20), ...u16(20), ...u16(0x0800), ...u16(0), ...u16(dosTime), ...u16(dosDate), ...u32(crc), ...u32(data.length), ...u32(data.length), ...u16(n.length), ...u16(0), ...u16(0), ...u16(0), ...u16(0), ...u32(0), ...u32(offset)]), n);
+      offset += head.length + n.length + data.length;
+    }
+    const cdSize = central.reduce((a, b) => a + b.length, 0);
+    const end = new Uint8Array([...u32(0x06054b50), ...u16(0), ...u16(0), ...u16(entries.length), ...u16(entries.length), ...u32(cdSize), ...u32(offset), ...u16(0)]);
+    return new Blob([...parts, ...central, end], { type: "application/zip" });
+  }
+  async function exportZip(records) {
+    const enc = new TextEncoder();
+    const base = fileSafe(state.team.name);
+    const entries = [];
+    const vcf = [];
+    for (const r of records) vcf.push(await vcard(r, true));
+    entries.push({ name: base + ".vcf", data: enc.encode(vcf.join("")) });
+    entries.push({ name: base + ".csv", data: enc.encode(csvText(records)) });
+    const seen = new Map();
+    for (const r of records) {
+      const url = photoURL(r);
+      if (!url) continue;
+      try {
+        const res = await fetch(url);
+        if (!res.ok) continue;
+        let name = fileSafe(displayName(r));
+        const n = (seen.get(name) || 0) + 1; seen.set(name, n);
+        if (n > 1) name += " " + n;
+        entries.push({ name: "photos/" + name + ".jpg", data: new Uint8Array(await res.arrayBuffer()) });
+      } catch (e) { /* the image host may refuse; the vCard still carries what it could */ }
+    }
+    return { blob: zipStore(entries), count: entries.length };
+  }
+  if (cfg.testHooks) window.__cardlioZip = async () => { const z = await exportZip(visibleRecords()); return { size: z.blob.size, count: z.count }; };
+
+  // ------------------------------------------------------------- keyboard
+  //
+  // Arrows move between cards, Home/End jump, Enter opens (a tile is a
+  // button). Up/Down use the grid's real column count.
+  $("grid").addEventListener("keydown", (e) => {
+    const tiles = [...$("grid").querySelectorAll(".tile")];
+    const i = tiles.indexOf(document.activeElement);
+    if (i < 0 || !tiles.length) return;
+    const top = tiles[0].getBoundingClientRect().top;
+    const cols = Math.max(1, tiles.filter((t) => Math.abs(t.getBoundingClientRect().top - top) < 2).length);
+    const go = { ArrowRight: i + 1, ArrowLeft: i - 1, ArrowDown: i + cols, ArrowUp: i - cols, Home: 0, End: tiles.length - 1 }[e.key];
+    if (go === undefined) return;
+    e.preventDefault();
+    tiles[Math.min(tiles.length - 1, Math.max(0, go))].focus();
+  });
 
   // --------------------------------------------------------------- toolbar
 
@@ -1040,7 +1302,14 @@
       const list = visibleRecords();
       if (!list.length) { toast("No cards to export", true); return; }
       if (b.dataset.export === "csv") downloadCSV(list);
-      else await downloadVCard(list, false);
+      else if (b.dataset.export === "zip") {
+        toast("Packing " + plural(list.length, "card") + "…");
+        const z = await exportZip(list);
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(z.blob); a.download = fileSafe(state.team.name) + ".zip";
+        document.body.append(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      } else await downloadVCard(list, false);
       toast("Exported " + plural(list.length, "card"));
     });
   }

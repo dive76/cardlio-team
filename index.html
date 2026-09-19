@@ -14,7 +14,7 @@
 <meta name="theme-color" content="#4F46E5">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="assets/icon-192.png">
-<link rel="stylesheet" href="app.css?v=3">
+<link rel="stylesheet" href="app.css?v=4">
 </head>
 <body>
 
@@ -117,6 +117,10 @@
             <option value="company">Company</option>
           </select>
         </label>
+        <button class="btn" id="add-card" type="button" title="Add a card by hand — someone you met, typed in">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          Add card
+        </button>
         <button class="btn" id="claim-all" type="button" hidden>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M5 19h14"/></svg>
           <span id="claim-all-label">Claim all unclaimed</span>
@@ -129,6 +133,7 @@
           <div class="menu" id="export-menu" role="menu" hidden>
             <button type="button" role="menuitem" data-export="vcf">Contacts (vCard)<small>For Apple Contacts, Outlook, Google</small></button>
             <button type="button" role="menuitem" data-export="csv">Spreadsheet (CSV)<small>For Excel, Numbers, a CRM import</small></button>
+            <button type="button" role="menuitem" data-export="zip">Everything (ZIP)<small>vCards with photos, the CSV, and the card photos</small></button>
           </div>
         </div>
       </div>
@@ -166,6 +171,7 @@
       </div>
       <div class="fields" id="d-fields"></div>
       <div class="notes" id="d-notes" hidden></div>
+      <div class="dupe-note" id="d-dupe" hidden></div>
       <p class="provenance" id="d-prov"></p>
       <div class="actions" id="d-actions"></div>
     </div>
@@ -184,6 +190,37 @@
     <div class="row">
       <button class="btn" type="button" id="c-cancel">Cancel</button>
       <button class="btn primary" type="submit" id="c-go">Claim and download</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- add / edit a card -->
+<dialog id="card-dialog" class="small-dialog form-dialog" aria-labelledby="f-title">
+  <form method="dialog" id="card-form" autocomplete="off">
+    <h2 id="f-title">Add a card</h2>
+    <p id="f-text">Someone you met without a card to scan. The team sees it like any shared card.</p>
+    <div class="form-grid">
+      <label>First name<input name="firstName" maxlength="80"></label>
+      <label>Last name<input name="lastName" maxlength="80"></label>
+      <label class="wide">Title<input name="title" maxlength="120"></label>
+      <label class="wide">Company<input name="company" maxlength="120"></label>
+      <label class="wide">E-mail<input name="emails" inputmode="email" maxlength="200" placeholder="one or more, separated by commas"></label>
+      <label>Phone<input name="phone" inputmode="tel" maxlength="40"></label>
+      <label>Mobile<input name="mobile" inputmode="tel" maxlength="40"></label>
+      <label class="wide">Website<input name="website" inputmode="url" maxlength="200"></label>
+      <label class="wide">Street<input name="street" maxlength="200"></label>
+      <label>Unit / floor<input name="unit" maxlength="60"></label>
+      <label>Postal code<input name="postalCode" maxlength="20"></label>
+      <label>City<input name="city" maxlength="80"></label>
+      <label>Country<input name="country" maxlength="60"></label>
+      <label class="wide">Event<input name="eventTag" maxlength="80" placeholder="e.g. Expo Singapore"></label>
+      <label class="wide">Notes<textarea name="notes" rows="3" maxlength="2000"></textarea></label>
+      <label class="wide" id="f-by-label">Your name, as the team sees it<input name="scannedBy" id="f-by" maxlength="60" autocomplete="name"></label>
+    </div>
+    <p class="join-error" id="f-error" role="alert" hidden></p>
+    <div class="row">
+      <button class="btn" type="button" id="f-cancel">Cancel</button>
+      <button class="btn primary" type="submit" id="f-go">Add to team</button>
     </div>
   </form>
 </dialog>
@@ -209,6 +246,6 @@
 
 <script src="config.js?v=1"></script>
 <script src="https://cdn.apple-cloudkit.com/ck/2/cloudkit.js"></script>
-<script src="app.js?v=3"></script>
+<script src="app.js?v=4"></script>
 </body>
 </html>
