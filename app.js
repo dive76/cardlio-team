@@ -1154,29 +1154,208 @@
     }
   });
 
-  async function createCard(fields, by) {
+  // `photo`, when given, is a Blob: CloudKit JS uploads a Blob field value
+  // as an asset through saveRecords (a records batch cannot carry one).
+  // If the upload is refused the card is saved again without the photo.
+  async function createCard(fields, by, photo) {
     const team = state.team;
     const id = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())).toUpperCase();
-    const batch = team.db.newRecordsBatch({ zoneID: team.zoneID });
-    batch.create([{
-      recordType: "TeamCard",
-      recordName: id,
-      fields: Object.assign({
-        cardID: { value: id, type: "STRING" },
-        scannedBy: { value: by, type: "STRING" },
-        scannedAt: { value: Date.now(), type: "TIMESTAMP" },
-        claimedBy: { value: "", type: "STRING" }
-      }, fields)
-    }]);
-    const response = await batch.commit();
-    if (response.hasErrors) throw new Error("Could not add the card: " + errorText(response.errors[0]));
+    const base = {
+      cardID: { value: id, type: "STRING" },
+      scannedBy: { value: by, type: "STRING" },
+      scannedAt: { value: Date.now(), type: "TIMESTAMP" },
+      claimedBy: { value: "", type: "STRING" }
+    };
+    const record = { recordType: "TeamCard", recordName: id, fields: Object.assign({}, base, fields) };
+    let response;
+    let photoSaved = false;
+    if (photo) {
+      const withPhoto = { recordType: "TeamCard", recordName: id, fields: Object.assign({}, record.fields, { photo: { value: photo } }) };
+      response = await team.db.saveRecords([withPhoto], { zoneID: team.zoneID });
+      photoSaved = !response.hasErrors;
+    }
+    if (!photo || response.hasErrors) {
+      const batch = team.db.newRecordsBatch({ zoneID: team.zoneID });
+      batch.create([record]);
+      response = await batch.commit();
+      if (response.hasErrors) throw new Error("Could not add the card: " + errorText(response.errors[0]));
+    }
     const saved = (response.records && response.records[0]) || {};
-    const record = { recordName: id, recordType: "TeamCard", recordChangeTag: saved.recordChangeTag || "", fields: {} };
-    for (const [k, f] of Object.entries(Object.assign({
-      cardID: { value: id }, scannedBy: { value: by }, scannedAt: { value: Date.now() }, claimedBy: { value: "" }
-    }, fields))) record.fields[k] = { value: f.value, type: f.type };
-    team.records.push(record);
+    const local = { recordName: id, recordType: "TeamCard", recordChangeTag: saved.recordChangeTag || "", fields: {} };
+    for (const [k, f] of Object.entries(record.fields)) local.fields[k] = { value: f.value, type: f.type };
+    if (photoSaved) {
+      const asset = saved.fields && saved.fields.photo && saved.fields.photo.value;
+      local.fields.photo = { value: asset && asset.downloadURL ? asset : { downloadURL: URL.createObjectURL(photo) }, type: "ASSETID" };
+    }
+    team.records.push(local);
+    return { record: local, photoSaved: !!photo && photoSaved };
   }
+
+  // ------------------------------------------------------------ vCard import
+  //
+  // A .vcf dropped on the page, or picked with Import vCard: one card or a
+  // whole address book. vCard 2.1 / 3.0 / 4.0 — folded lines, escaped
+  // values, quoted-printable, a photo inline as base64 or a data: URI
+  // (a photo behind an http URL is not fetched). Mapped to what a
+  // TeamCard holds; extra phones go to the notes so nothing is lost.
+  function parseVCards(text) {
+    const unfolded = text.replace(/\r\n?/g, "\n").replace(/\n[ \t]/g, "");
+    const cards = [];
+    let cur = null;
+    const unescape = (s) => s.replace(/\\n/gi, "\n").replace(/\\,/g, ",").replace(/\\;/g, ";").replace(/\\\\/g, "\\");
+    const splitEsc = (s) => { const out = []; let buf = ""; for (let i = 0; i < s.length; i++) { const c = s[i]; if (c === "\\" && i + 1 < s.length) { buf += c + s[++i]; } else if (c === ";") { out.push(buf); buf = ""; } else buf += c; } out.push(buf); return out.map(unescape); };
+    const qp = (s) => { try { return decodeURIComponent(s.replace(/=\n/g, "").replace(/=([0-9A-F]{2})/gi, "%$1")); } catch (e) { return s; } };
+    for (const raw of unfolded.split("\n")) {
+      const line = raw.trim();
+      if (!line) continue;
+      const colon = line.indexOf(":");
+      if (colon < 0) continue;
+      const head = line.slice(0, colon), value = line.slice(colon + 1);
+      const parts = head.split(";");
+      const name = parts[0].toUpperCase().replace(/^ITEM\d+\./, "");
+      const params = parts.slice(1).map((p) => p.toUpperCase());
+      const types = params.flatMap((p) => p.replace(/^TYPE=/, "").split(","));
+      const enc = params.find((p) => p.startsWith("ENCODING="));
+      const v = enc && /QUOTED-PRINTABLE/.test(enc) ? qp(value) : value;
+      if (name === "BEGIN" && v.toUpperCase() === "VCARD") { cur = { firstName: "", lastName: "", title: "", company: "", emails: [], phone: "", mobile: "", website: "", street: "", unit: "", postalCode: "", city: "", country: "", notes: "", eventTag: "", extra: [], photo: null, fn: "" }; continue; }
+      if (!cur) continue;
+      if (name === "END") { if (v.toUpperCase() === "VCARD") { finishVCard(cur); cards.push(cur); cur = null; } continue; }
+      switch (name) {
+        case "N": { const n = splitEsc(v); cur.lastName = (n[0] || "").trim(); cur.firstName = [n[1], n[2]].filter(Boolean).join(" ").trim(); break; }
+        case "FN": cur.fn = unescape(v).trim(); break;
+        case "ORG": cur.company = splitEsc(v)[0].trim(); break;
+        case "TITLE": cur.title = unescape(v).trim(); break;
+        case "NOTE": cur.notes = unescape(v).trim(); break;
+        case "EMAIL": { const e = unescape(v).trim(); if (e && !cur.emails.includes(e)) cur.emails.push(e); break; }
+        case "URL": if (!cur.website) cur.website = unescape(v).trim(); break;
+        case "TEL": {
+          const t = unescape(v).trim();
+          if (!t) break;
+          const cell = types.some((x) => /CELL|MOBILE|IPHONE/.test(x));
+          if (cell && !cur.mobile) cur.mobile = t;
+          else if (!cell && !cur.phone && !types.some((x) => /FAX|PAGER/.test(x))) cur.phone = t;
+          else cur.extra.push((types.some((x) => /FAX/.test(x)) ? "Fax: " : "Phone: ") + t);
+          break;
+        }
+        case "ADR": {
+          if (cur.street || cur.city) { cur.extra.push("Other address: " + splitEsc(v).filter(Boolean).join(", ")); break; }
+          const a = splitEsc(v);
+          cur.unit = (a[1] || "").trim(); cur.street = (a[2] || "").trim(); cur.city = (a[3] || "").trim();
+          cur.postalCode = (a[5] || "").trim(); cur.country = (a[6] || "").trim();
+          if (a[4] && a[4].trim()) cur.extra.push("Region: " + a[4].trim());
+          break;
+        }
+        case "PHOTO": {
+          let b64 = "", mime = "image/jpeg";
+          const m = v.match(/^data:(image\/[a-z+]+);base64,(.+)$/i);
+          if (m) { mime = m[1]; b64 = m[2]; }
+          else if (enc && /^ENCODING=(B|BASE64)$/.test(enc)) { b64 = v; const t = types.find((x) => /JPEG|PNG|GIF|WEBP/.test(x)); if (t) mime = "image/" + t.toLowerCase().replace("JPG", "jpeg"); }
+          if (b64) { try { const bin = atob(b64.replace(/\s+/g, "")); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); cur.photo = new Blob([bytes], { type: mime }); } catch (e) { /* not base64 */ } }
+          break;
+        }
+        default: break;
+      }
+    }
+    return cards;
+  }
+  function finishVCard(c) {
+    if (!c.firstName && !c.lastName && c.fn) {
+      const w = c.fn.split(/\s+/);
+      if (w.length > 1) { c.lastName = w.pop(); c.firstName = w.join(" "); } else c.firstName = c.fn;
+    }
+    if (c.extra.length) c.notes = [c.notes, ...c.extra].filter(Boolean).join("\n");
+    delete c.extra;
+  }
+  function vcardFields(c) {
+    const f = {};
+    for (const k of FORM_FIELDS) f[k] = k === "emails" ? { value: c.emails, type: "STRING_LIST" } : { value: c[k] || "", type: "STRING" };
+    return f;
+  }
+  if (cfg.testHooks) window.__cardlioParseVCards = parseVCards;
+
+  let importing = [];
+  async function importFiles(files) {
+    if (!state.team) { toast("Open a team first", true); return; }
+    const parsed = [];
+    for (const file of files) {
+      if (!/\.vcf$/i.test(file.name) && !/vcard/i.test(file.type)) { toast(file.name + " is not a vCard file", true); continue; }
+      parsed.push(...parseVCards(await file.text()));
+    }
+    const usable = parsed.filter((c) => c.firstName || c.lastName || c.company);
+    if (!usable.length) { toast("No contacts found in that file", true); return; }
+    importing = usable;
+    // Preview: who is coming in, and which of them the team already has
+    // (the same duplicate rule as the chips).
+    const existing = duplicateMap(state.team.records.concat(usable.map((c, i) => ({ recordName: "import-" + i, recordType: "TeamCard", fields: Object.fromEntries(Object.entries(vcardFields(c)).map(([k, v]) => [k, { value: v.value }])) }))));
+    const list = $("i-list");
+    list.replaceChildren();
+    usable.forEach((c, i) => {
+      const li = el("li");
+      if (c.photo) { const img = el("img", "ph"); img.alt = ""; img.src = URL.createObjectURL(c.photo); li.append(img); }
+      else li.append(el("div", "ph", initials([c.firstName, c.lastName].filter(Boolean).join(" ") || c.company)));
+      const who = el("div", "who");
+      who.append(el("b", null, [c.firstName, c.lastName].filter(Boolean).join(" ") || c.company),
+                 el("span", null, [c.title, c.company, c.emails[0]].filter(Boolean).join(" · ")));
+      li.append(who);
+      const dupes = (existing.get("import-" + i) || []).filter((o) => !String(o.recordName).startsWith("import-"));
+      if (dupes.length) li.append(el("span", "status dupe", "Already in the team"));
+      list.append(li);
+    });
+    $("i-title").textContent = "Import " + plural(usable.length, "card") + "?";
+    $("i-text").textContent = "Into " + state.team.name + ", shared under your name. " +
+      (usable.some((c) => c.photo) ? "Photos come along. " : "") + "Cards marked as already in the team are imported too — remove them afterwards if they are the same person.";
+    $("i-by").value = myName();
+    $("i-error").hidden = true;
+    $("i-go").textContent = "Import " + plural(usable.length, "card");
+    $("import-dialog").showModal();
+    $("i-by").focus();
+  }
+  $("i-cancel").addEventListener("click", () => $("import-dialog").close());
+  $("import-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const by = $("i-by").value.trim() || "Someone";
+    storageSet(NAME_KEY, by);
+    $("i-go").disabled = true;
+    let added = 0, noPhoto = 0, failure = null;
+    try {
+      for (const c of importing) {
+        try {
+          const r = await createCard(vcardFields(c), by, c.photo);
+          added++;
+          if (c.photo && !r.photoSaved) noPhoto++;
+        } catch (err) { failure = err; break; }
+      }
+    } finally {
+      $("i-go").disabled = false;
+      $("import-dialog").close();
+    }
+    renderTeamNav();
+    renderTeam();
+    if (failure) toast((added ? "Imported " + plural(added, "card") + "; then: " : "") + (failure.message || errorText(failure)), true);
+    else toast("Imported " + plural(added, "card") + (noPhoto ? " (" + noPhoto + " without their photo — iCloud refused the upload)" : ""));
+  });
+  $("import-vcf").addEventListener("click", () => $("vcf-file").click());
+  $("vcf-file").addEventListener("change", async (e) => { await importFiles([...e.target.files]); e.target.value = ""; });
+
+  // Drop anywhere on the page while signed in.
+  let dragDepth = 0;
+  const hasFiles = (e) => e.dataTransfer && [...e.dataTransfer.types].includes("Files");
+  document.addEventListener("dragenter", (e) => {
+    if (!hasFiles(e) || $("app").hidden) return;
+    e.preventDefault();
+    dragDepth++;
+    $("drop-into").textContent = state.team ? "into " + state.team.name : "";
+    $("drop-hint").hidden = false;
+  });
+  document.addEventListener("dragover", (e) => { if (hasFiles(e) && !$("app").hidden) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; } });
+  document.addEventListener("dragleave", (e) => { if (!hasFiles(e)) return; dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) $("drop-hint").hidden = true; });
+  document.addEventListener("drop", async (e) => {
+    if (!hasFiles(e) || $("app").hidden) return;
+    e.preventDefault();
+    dragDepth = 0;
+    $("drop-hint").hidden = true;
+    await importFiles([...e.dataTransfer.files]);
+  });
 
   async function updateCard(r, fields) {
     const team = state.team;

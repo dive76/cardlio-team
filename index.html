@@ -14,7 +14,7 @@
 <meta name="theme-color" content="#4F46E5">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="assets/icon-192.png">
-<link rel="stylesheet" href="app.css?v=4">
+<link rel="stylesheet" href="app.css?v=5">
 </head>
 <body>
 
@@ -121,6 +121,11 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
           Add card
         </button>
+        <button class="btn" id="import-vcf" type="button" title="Import contacts from a vCard file (.vcf) — or drop the file anywhere on this page">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V5"/><path d="M7.5 9.5L12 5l4.5 4.5"/><path d="M5 19h14"/></svg>
+          Import vCard
+        </button>
+        <input type="file" id="vcf-file" accept=".vcf,text/vcard,text/x-vcard" multiple hidden>
         <button class="btn" id="claim-all" type="button" hidden>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M5 19h14"/></svg>
           <span id="claim-all-label">Claim all unclaimed</span>
@@ -194,6 +199,26 @@
   </form>
 </dialog>
 
+<!-- vCard drop -->
+<div class="drop-hint" id="drop-hint" hidden aria-hidden="true">
+  <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V5"/><path d="M7.5 9.5L12 5l4.5 4.5"/><path d="M5 19h14"/></svg><b>Drop the vCard file</b><span id="drop-into"></span></div>
+</div>
+
+<!-- vCard import preview -->
+<dialog id="import-dialog" class="small-dialog form-dialog" aria-labelledby="i-title">
+  <form method="dialog" id="import-form">
+    <h2 id="i-title">Import cards</h2>
+    <p id="i-text"></p>
+    <ul class="import-list" id="i-list"></ul>
+    <label id="i-by-label">Your name, as the team sees it<input id="i-by" maxlength="60" autocomplete="name"></label>
+    <p class="join-error" id="i-error" role="alert" hidden></p>
+    <div class="row">
+      <button class="btn" type="button" id="i-cancel">Cancel</button>
+      <button class="btn primary" type="submit" id="i-go">Import</button>
+    </div>
+  </form>
+</dialog>
+
 <!-- add / edit a card -->
 <dialog id="card-dialog" class="small-dialog form-dialog" aria-labelledby="f-title">
   <form method="dialog" id="card-form" autocomplete="off">
@@ -246,6 +271,6 @@
 
 <script src="config.js?v=1"></script>
 <script src="https://cdn.apple-cloudkit.com/ck/2/cloudkit.js"></script>
-<script src="app.js?v=4"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>

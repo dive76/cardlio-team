@@ -384,3 +384,18 @@ dialog::backdrop { background: rgba(10, 8, 25, 0.55); backdrop-filter: blur(3px)
 .dupe-note { font-size: 13.5px; color: var(--ink-2); background: var(--accent-soft); border-radius: 10px; padding: 10px 12px; }
 .dupe-note button { font: inherit; font-weight: 600; color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; }
 .tile:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+/* ---- 2026-09-19: vCard drop / import ---- */
+.drop-hint { position: fixed; inset: 0; z-index: 60; background: rgba(79, 70, 229, 0.12); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); display: grid; place-items: center; pointer-events: none; }
+.drop-hint > div { background: var(--bg-raised); border: 2px dashed var(--accent); border-radius: 20px; padding: 28px 36px; display: grid; justify-items: center; gap: 8px; color: var(--ink); font-size: 15px; box-shadow: var(--shadow-lg); }
+.drop-hint svg { width: 34px; height: 34px; color: var(--accent); }
+.drop-hint span { color: var(--muted); font-size: 13.5px; }
+.import-list { list-style: none; margin: 0; padding: 0; max-height: 40vh; overflow: auto; display: grid; gap: 6px; border: 1px solid var(--line); border-radius: 12px; }
+.import-list li { display: flex; gap: 10px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: 14px; }
+.import-list li:last-child { border-bottom: 0; }
+.import-list .ph { width: 40px; height: 26px; border-radius: 4px; background: var(--bg-alt); object-fit: cover; flex: none; display: grid; place-items: center; font-size: 10px; color: var(--muted); }
+.import-list img.ph { object-fit: cover; }
+.import-list .who { flex: 1; min-width: 0; }
+.import-list .who b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.import-list .who span { color: var(--muted); font-size: 12.5px; }
+.import-list .status.dupe { flex: none; }
