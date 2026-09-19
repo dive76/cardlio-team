@@ -39,3 +39,15 @@ only; websites must parse as http(s); CSV cells that could be formulas are
 prefixed. CSP allows scripts from this site and Apple's CDN only.
 
 `/spike/` forwards here (the first read-only test lived there).
+
+## What it does (2026-09-19)
+
+- Lists the teams the signed-in Apple ID owns or joined; search, filter (unclaimed / claimed / event), sort.
+- Claim a card (with the name you claim under) — or **Claim all** the unclaimed cards shown, downloaded as one vCard file.
+- **Release** a card you claimed yourself (a mis-tap); a claimed card can still be **downloaded as a copy**.
+- **Auto-refresh**: every 60 s while the tab is visible the team's zone is re-read; claims apply in place, new cards show as a "N new cards — show" pill.
+- **Deep links**: `#team=<zone>&card=<recordName>` opens a card; **Copy link** in the detail.
+- **Installable** (web manifest + a small service worker for the shell; every iCloud call stays on the network).
+- Join a team from an invite link.
+
+Writes are limited to `claimedBy` on one `TeamCard` (a conflict-checked update) and accepting an invite.

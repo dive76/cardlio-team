@@ -30,8 +30,11 @@
     sort: "new",
     query: "",
     event: "",
-    open: null          // record shown in the detail dialog
+    open: null,         // record shown in the detail dialog
+    pendingNew: 0       // cards the background poll saw that are not shown yet
   };
+  const myName = () => storageGet(NAME_KEY);
+  const isMine = (r) => { const n = myName(); return !!n && str(r, "claimedBy").localeCompare(n, undefined, { sensitivity: "base" }) === 0; };
 
   // ---------------------------------------------------------------- utils
 
@@ -302,12 +305,17 @@
       return;
     }
     $("no-teams").hidden = true;
-    const wanted = new URLSearchParams(location.hash.slice(1)).get("team") ||
+    const params = new URLSearchParams(location.hash.slice(1));
+    // Read the deep link BEFORE selectTeam rewrites the hash.
+    const wantedCard = params.get("card");
+    const wanted = params.get("team") ||
                    (state.team && state.team.id) || storageGet("cardlio.team.last");
     // Otherwise the team with the most recent card: that is the fair in progress.
     const latest = (t) => t.records.reduce((m, r) => Math.max(m, scannedAt(r)), t.createdAt || 0);
     const busiest = [...state.teams].sort((a, b) => latest(b) - latest(a))[0];
     selectTeam(state.teams.find((t) => t.id === wanted) || busiest);
+    if (wantedCard) openDeepLinkedCard(wantedCard);
+    startPolling();
   }
 
   function renderSkeletons() {
@@ -355,8 +363,9 @@
   function selectTeam(team) {
     state.team = team;
     state.event = "";
+    $("new-pill").hidden = !(team.pendingRecords && team.pendingRecords.length);
     storageSet("cardlio.team.last", team.id);
-    history.replaceState(null, "", "#team=" + encodeURIComponent(team.id));
+    setHash({ team: team.id });
     document.title = team.name + " · cardlio Team";
     for (const b of $("team-nav").querySelectorAll("button")) {
       b.setAttribute("aria-current", b.dataset.team === team.id ? "true" : "false");
@@ -364,6 +373,19 @@
     $("team-select").value = team.id;
     $("team-view").hidden = false;
     renderTeam();
+  }
+
+  // #team=<id>&card=<recordName> — a card can be sent to a colleague in
+  // chat and opens directly (2026-09-19).
+  function setHash(params) {
+    const p = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v) p.set(k, v);
+    history.replaceState(null, "", "#" + p.toString());
+  }
+  function openDeepLinkedCard(want) {
+    if (!want || !state.team) return;
+    const r = state.team.records.find((x) => x.recordName === want);
+    if (r) openDetail(r);
   }
 
   function renderTeam() {
@@ -438,6 +460,12 @@
     $("no-match").hidden = !(total > 0 && list.length === 0);
     $("result-line").textContent = total ? (list.length === total ? plural(total, "card") : list.length + " of " + plural(total, "card")) : "";
     for (const r of list) grid.append(tile(r));
+    // Claim all: every unclaimed card among the ones SHOWN (the search,
+    // the filter and the event chip narrow it), so "claim everything from
+    // yesterday's event" is a filter plus one click.
+    const open = list.filter((r) => !str(r, "claimedBy"));
+    $("claim-all").hidden = open.length < 2;
+    $("claim-all-label").textContent = "Claim all " + plural(open.length, "unclaimed card");
   }
 
   function tile(r) {
@@ -546,6 +574,7 @@
     $("d-prov").textContent = "Shared " + [by ? "by " + by : "", when(scannedAt(r)) ? "on " + when(scannedAt(r)) : ""].filter(Boolean).join(" ") + " into " + state.team.name + ".";
 
     renderDetailActions(r);
+    setHash({ team: state.team.id, card: r.recordName });
     const dlg = $("detail");
     if (!dlg.open) dlg.showModal();
     $("d-close").focus();
@@ -555,66 +584,122 @@
     const actions = $("d-actions");
     actions.replaceChildren();
     const claimedBy = str(r, "claimedBy");
+    const dl = el("button", "btn");
+    dl.type = "button";
+    dl.append(icon("download"), el("span", null, claimedBy ? "Download a copy (vCard)" : "Download vCard"));
+    dl.addEventListener("click", () => downloadVCard([r], true));
     if (claimedBy) {
+      // A claimed card can still be anyone's to keep (the apps got "Add
+      // Copy" the same day): the download is the copy, and stands first.
+      const row = el("div", "claimed-row");
       const note = el("div", "claimed-note");
       note.append(icon("check"), el("span", null, "Claimed by " + claimedBy));
-      actions.append(note);
+      row.append(note);
+      if (isMine(r)) {
+        const rel = el("button", "btn quiet");
+        rel.type = "button";
+        rel.append(el("span", null, "Release"));
+        rel.title = "Give the lead back to the team — a mis-tap, or someone else should have it";
+        rel.addEventListener("click", () => release(r));
+        row.append(rel);
+      }
+      actions.append(row);
+      dl.classList.add("primary");
+      actions.append(dl);
     } else {
       const claim = el("button", "btn primary");
       claim.type = "button";
       claim.append(icon("hand"), el("span", null, "Claim"));
       claim.addEventListener("click", () => askClaim(r));
-      actions.append(claim);
+      actions.append(claim, dl);
     }
-    const dl = el("button", "btn");
-    dl.type = "button";
-    dl.append(icon("download"), el("span", null, "Download vCard"));
-    dl.addEventListener("click", () => downloadVCard([r], true));
-    actions.append(dl);
+    const link = el("button", "btn");
+    link.type = "button";
+    link.append(el("span", null, "Copy link"));
+    link.title = "A link that opens this card for anyone on the team";
+    link.addEventListener("click", async () => {
+      const url = location.origin + location.pathname + "#" + new URLSearchParams({ team: state.team.id, card: r.recordName }).toString();
+      try { await navigator.clipboard.writeText(url); toast("Link copied"); }
+      catch (e) { toast(url); }
+    });
+    actions.append(link);
+  }
+
+  // Undo a claim you made — back to unclaimed for the whole team. Only
+  // for a card claimed under the name this browser claims with; the apps
+  // read an empty `claimedBy` as open.
+  async function release(r) {
+    try {
+      await setClaimedBy(r, "");
+      toast("Released — the card is unclaimed again");
+      renderTeam();
+      if (state.open === r) openDetail(r);
+    } catch (err) {
+      toast(err.message || errorText(err), true);
+    }
   }
 
   $("d-close").addEventListener("click", () => $("detail").close());
   $("detail").addEventListener("click", (e) => { if (e.target === $("detail")) $("detail").close(); });
   // The close event arrives a moment after close(): if another card was
   // opened in between, it is that card's dialog now — keep it.
-  $("detail").addEventListener("close", () => { if (!$("detail").open) state.open = null; });
+  $("detail").addEventListener("close", () => {
+    if (!$("detail").open) { state.open = null; if (state.team) setHash({ team: state.team.id }); }
+  });
 
   // ----------------------------------------------------------------- claim
 
-  let claiming = null;
-  function askClaim(r) {
-    claiming = r;
-    $("c-text").textContent = "The team will see " + displayName(r) + " as yours, and the contact downloads as a vCard. " +
-      "In the cardlio app, the card stays in the team; add it to your own library there if you want it on your iPhone or Mac.";
-    $("c-name").value = storageGet(NAME_KEY);
+  let claiming = [];   // the card, or every unclaimed card shown
+  function askClaim(r) { askClaimAll([r]); }
+  function askClaimAll(records) {
+    claiming = records;
+    const one = records.length === 1;
+    $("c-title").textContent = one ? "Claim this card?" : "Claim " + plural(records.length, "card") + "?";
+    $("c-text").textContent = one
+      ? "The team will see " + displayName(records[0]) + " as yours, and the contact downloads as a vCard."
+      : "The team will see all " + records.length + " as yours, and they download together as one vCard file. A card someone claims in the meantime is skipped.";
+    $("c-fine").textContent = "In the cardlio app the cards stay in the team; a colleague can still download a copy.";
+    $("c-fine").hidden = false;
+    $("c-go").textContent = one ? "Claim and download" : "Claim all and download";
+    $("c-name").value = myName();
     $("claim-dialog").showModal();
     $("c-name").focus();
   }
   $("c-cancel").addEventListener("click", () => $("claim-dialog").close());
+  $("claim-all").addEventListener("click", () => {
+    const open = visibleRecords().filter((r) => !str(r, "claimedBy"));
+    if (open.length) askClaimAll(open);
+  });
   $("claim-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const name = $("c-name").value.trim();
-    if (!name || !claiming) return;
+    if (!name || !claiming.length) return;
     storageSet(NAME_KEY, name);
     $("c-go").disabled = true;
+    const won = [], skipped = [];
+    let failure = null;
     try {
-      await claim(claiming, name);
-      $("claim-dialog").close();
-      toast("Claimed. The contact is downloading.");
-      downloadVCard([claiming], true);
-      renderTeam();
-      if (state.open === claiming) openDetail(claiming);
-    } catch (err) {
-      $("claim-dialog").close();
-      toast(err.message || errorText(err), true);
+      for (const r of claiming) {
+        try { await claim(r, name); won.push(r); }
+        catch (err) { if (err.conflict) skipped.push(r); else { failure = err; break; } }
+      }
     } finally {
       $("c-go").disabled = false;
+      $("claim-dialog").close();
     }
+    if (won.length) downloadVCard(won, true);
+    renderTeam();
+    if (state.open && claiming.includes(state.open)) openDetail(state.open);
+    if (failure) toast(failure.message || errorText(failure), true);
+    else if (claiming.length === 1) toast("Claimed. The contact is downloading.");
+    else toast("Claimed " + plural(won.length, "card") + (skipped.length ? "; " + skipped.length + " taken by someone else meanwhile" : "") + ". Downloading.");
   });
 
   // UPDATE, not replace: only `claimedBy` is sent, and the record's change
   // tag makes CloudKit refuse if anyone changed the card since it loaded.
-  async function claim(r, name) {
+  async function claim(r, name) { await setClaimedBy(r, name); }
+
+  async function setClaimedBy(r, name) {
     const team = state.team;
     const batch = team.db.newRecordsBatch({ zoneID: team.zoneID });
     batch.update([{
@@ -629,9 +714,11 @@
       const code = err.ckErrorCode || err.serverErrorCode || "";
       if (/CONFLICT|ATOMIC/.test(code)) {
         await refreshTeam(team);
-        throw new Error("Someone changed this card a moment ago. It has been reloaded; check whether it's still unclaimed.");
+        const e = new Error("Someone changed this card a moment ago. It has been reloaded; check whether it's still unclaimed.");
+        e.conflict = true;
+        throw e;
       }
-      throw new Error("Could not claim: " + errorText(err));
+      throw new Error("Could not " + (name ? "claim" : "release") + ": " + errorText(err));
     }
     const saved = response.records && response.records[0];
     r.fields.claimedBy = { value: name, type: "STRING" };
@@ -644,6 +731,64 @@
     renderTeamNav();
     if (state.team === team) renderTeam();
   }
+
+  // ---------------------------------------------------------------- polling
+  //
+  // Colleagues add cards all day at a fair; the page used to load once.
+  // Every 60 s while the tab is visible the selected team's zone is
+  // re-read (cheap: zone changes). Claims and edits apply in place; NEW
+  // cards are announced by a pill ("3 new cards — show") rather than
+  // reshuffling the grid under the reader's cursor.
+  const POLL_MS = 60000;
+  let pollTimer = null;
+  let polling = false;
+  function startPolling() {
+    if (pollTimer) return;
+    pollTimer = setInterval(pollTeam, POLL_MS);
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") pollTeam(); });
+  }
+  async function pollTeam(force) {
+    const team = state.team;
+    if (!team || polling || (!force && document.visibilityState !== "visible") || $("claim-dialog").open) return;
+    polling = true;
+    try {
+      const fresh = (await zoneRecords(team.db, team.zoneID)).filter((x) => x.recordType === "TeamCard");
+      const known = new Map(team.records.map((r) => [r.recordName, r]));
+      const added = fresh.filter((r) => !known.has(r.recordName));
+      let changed = false;
+      for (const r of fresh) {
+        const old = known.get(r.recordName);
+        if (old && old.recordChangeTag !== r.recordChangeTag) {
+          old.fields = r.fields; old.recordChangeTag = r.recordChangeTag; changed = true;
+        }
+      }
+      const freshNames = new Set(fresh.map((r) => r.recordName));
+      const removed = team.records.filter((r) => !freshNames.has(r.recordName));
+      if (removed.length) { team.records = team.records.filter((r) => freshNames.has(r.recordName)); changed = true; }
+      if (added.length) {
+        team.pendingRecords = (team.pendingRecords || []).concat(added.filter((a) => !(team.pendingRecords || []).some((p) => p.recordName === a.recordName)));
+        const n = team.pendingRecords.length;
+        $("new-pill").textContent = plural(n, "new card") + " — show";
+        $("new-pill").hidden = false;
+      }
+      if (changed) {
+        if (state.open && !freshNames.has(state.open.recordName)) $("detail").close();
+        renderTeam();
+        if (state.open) renderDetailActions(state.open);
+      }
+    } catch (e) {
+      // A failed poll is silent: the Reload button and the next tick remain.
+    } finally {
+      polling = false;
+    }
+  }
+  $("new-pill").addEventListener("click", () => {
+    const team = state.team;
+    if (team && team.pendingRecords) { team.records.push(...team.pendingRecords); team.pendingRecords = []; }
+    $("new-pill").hidden = true;
+    renderTeamNav();
+    renderTeam();
+  });
 
   // ------------------------------------------------------------------ join
 
@@ -908,6 +1053,15 @@
   });
 
   // ------------------------------------------------------------------ start
+
+  // Installable (manifest + a small service worker for the shell) —
+  // Windows and Android colleagues get a home-screen icon; iCloud calls
+  // always go to the network.
+  if ("serviceWorker" in navigator && location.protocol === "https:") {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  }
+
+  if (cfg.testHooks) window.__cardlioTeamPoll = () => pollTeam(true);   // the fake-CloudKit harness only (its tab may be hidden)
 
   container.setUpAuth()
     .then((user) => (user ? signedIn() : signedOut()))
