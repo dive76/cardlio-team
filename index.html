@@ -14,7 +14,7 @@
 <meta name="theme-color" content="#4F46E5">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="assets/icon-192.png">
-<link rel="stylesheet" href="app.css?v=5">
+<link rel="stylesheet" href="app.css?v=6">
 </head>
 <body>
 
@@ -176,6 +176,11 @@
       </div>
       <div class="fields" id="d-fields"></div>
       <div class="notes" id="d-notes" hidden></div>
+      <div class="team-notes">
+        <label for="d-team-notes">Team notes <span>shared with everyone on the team — who called, what was promised</span></label>
+        <textarea id="d-team-notes" rows="3" maxlength="4000" placeholder="e.g. 20 Sep · called, send the brochure"></textarea>
+        <div class="row"><button class="btn" type="button" id="d-team-notes-save" disabled>Save note</button></div>
+      </div>
       <div class="dupe-note" id="d-dupe" hidden></div>
       <p class="provenance" id="d-prov"></p>
       <div class="actions" id="d-actions"></div>
@@ -271,6 +276,6 @@
 
 <script src="config.js?v=1"></script>
 <script src="https://cdn.apple-cloudkit.com/ck/2/cloudkit.js"></script>
-<script src="app.js?v=5"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>

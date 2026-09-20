@@ -46,6 +46,7 @@
   }
 
   const ICONS = {
+    note: '<path d="M6 4h9l4 4v12H6z"/><path d="M15 4v4h4"/><path d="M9 12h6M9 16h6"/>',
     mail: '<path d="M4 6.5h16v11H4z"/><path d="M4.5 7l7.5 6 7.5-6"/>',
     phone: '<path d="M6.5 4h3l1.5 4-2 1.3a10 10 0 0 0 5.7 5.7L16 13l4 1.5v3a2 2 0 0 1-2.2 2A15.5 15.5 0 0 1 4.5 6.2 2 2 0 0 1 6.5 4z"/>',
     mobile: '<rect x="7" y="3" width="10" height="18" rx="2.5"/><path d="M11 17.5h2"/>',
@@ -461,7 +462,7 @@
       if (!q) return true;
       const hay = fold([fullName(r), str(r, "title"), str(r, "company"), emails(r).join(" "),
         str(r, "phone"), str(r, "mobile"), str(r, "website"), str(r, "city"), str(r, "country"),
-        str(r, "eventTag"), str(r, "scannedBy"), str(r, "claimedBy"), str(r, "notes")].join(" "));
+        str(r, "eventTag"), str(r, "scannedBy"), str(r, "claimedBy"), str(r, "notes"), str(r, "teamNotes")].join(" "));
       return q.split(/\s+/).every((w) => hay.includes(w));
     });
     const byText = (get) => (a, b) => get(a).localeCompare(get(b), undefined, { sensitivity: "base" });
@@ -512,6 +513,8 @@
     if (role) tb.append(el("div", "co", role));
     const place = [str(r, "city"), str(r, "country")].filter(Boolean).join(", ");
     if (place) tb.append(el("div", "ln", place));
+    const teamNote = str(r, "teamNotes").split(/\r?\n/).find(Boolean);
+    if (teamNote) { const n = el("div", "note"); n.append(icon("note"), el("span", null, teamNote)); tb.append(n); }
     const foot = el("div", "foot");
     const by = str(r, "scannedBy");
     foot.append(el("span", null, [by, when(scannedAt(r))].filter(Boolean).join(" · ")));
@@ -591,6 +594,8 @@
     const notes = str(r, "notes");
     $("d-notes").hidden = !notes;
     $("d-notes").textContent = notes;
+    $("d-team-notes").value = str(r, "teamNotes");
+    $("d-team-notes-save").disabled = true;
 
     // The same person shared twice (two colleagues scanned the same
     // visitor) — say so, and link the other card.
@@ -684,6 +689,26 @@
       toast(err.message || errorText(err), true);
     }
   }
+
+  // The team's shared note on the lead (2026-09-20): one field, last
+  // writer wins, the same conflict-checked update as an edit.
+  $("d-team-notes").addEventListener("input", () => {
+    $("d-team-notes-save").disabled = !state.open || $("d-team-notes").value.trim() === str(state.open, "teamNotes");
+  });
+  $("d-team-notes-save").addEventListener("click", async () => {
+    const r = state.open;
+    if (!r) return;
+    const text = $("d-team-notes").value.trim();
+    $("d-team-notes-save").disabled = true;
+    try {
+      await updateCard(r, { teamNotes: { value: text, type: "STRING" } });
+      toast("Note saved for the team");
+      renderGrid();
+    } catch (err) {
+      toast(err.message || errorText(err), true);
+      $("d-team-notes-save").disabled = false;
+    }
+  });
 
   $("d-close").addEventListener("click", () => $("detail").close());
   $("detail").addEventListener("click", (e) => { if (e.target === $("detail")) $("detail").close(); });
@@ -1048,10 +1073,10 @@
   }
   function csvText(records) {
     const head = ["First name", "Last name", "Title", "Company", "Emails", "Phone", "Mobile", "Website",
-      "Street", "Unit", "Postal code", "City", "Country", "Event", "Notes", "Shared by", "Shared on", "Claimed by"];
+      "Street", "Unit", "Postal code", "City", "Country", "Event", "Notes", "Team notes", "Shared by", "Shared on", "Claimed by"];
     const rows = records.map((r) => [str(r, "firstName"), str(r, "lastName"), str(r, "title"), str(r, "company"),
       emails(r).join("; "), str(r, "phone"), str(r, "mobile"), str(r, "website"), str(r, "street"), str(r, "unit"),
-      str(r, "postalCode"), str(r, "city"), str(r, "country"), str(r, "eventTag"), str(r, "notes"), str(r, "scannedBy"),
+      str(r, "postalCode"), str(r, "city"), str(r, "country"), str(r, "eventTag"), str(r, "notes"), str(r, "teamNotes"), str(r, "scannedBy"),
       scannedAt(r) ? new Date(scannedAt(r)).toISOString().slice(0, 10) : "", str(r, "claimedBy")]);
     return "\ufeff" + [head, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n") + "\r\n";
   }
