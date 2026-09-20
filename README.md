@@ -55,5 +55,7 @@ prefixed. CSP allows scripts from this site and Apple's CDN only.
 - **Dashboard**: unclaimed and who claimed how many, who shared how many, the last seven days as bars.
 - **Keyboard**: `/` to search, arrows / Home / End across the cards, Enter opens.
 - **Possible duplicate**: the apps' detector rule (a personal e-mail at the same company, or the same name + company) flags two cards of one visitor and links them.
+- **Team notes** on a card (the `teamNotes` field, deployed 2026-09-20): anyone on the team edits, the first line shows on the tile and in the list, the CSV carries the column.
+- **Looks (2026-09-20)**: a card without a photo is typeset AS a card (name, title, company, accent bar) instead of initials; the team header is a hero with the cards' date range and the people who shared or claimed (as the cards name them — the web API cannot read the share's participant list); a photo opens full-size in a lightbox (click to zoom, rotate); tiles rise in, dialogs ease in, empty states carry a card illustration; a **list view** toggle (dense table: name, company, event, shared by, claimed by, note; sortable on the first four; the choice is remembered); a dark-mode contrast pass; on a phone a **bottom action bar** (Search · Add · Claim all · Export) replaces the toolbar buttons and the grid goes single-column under 480 px.
 
 Writes: `claimedBy` on a `TeamCard` (claim and release), creating a `TeamCard`, editing a `TeamCard`'s fields — each a conflict-checked batch — and accepting an invite.

@@ -14,7 +14,7 @@
 <meta name="theme-color" content="#4F46E5">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="assets/icon-192.png">
-<link rel="stylesheet" href="app.css?v=6">
+<link rel="stylesheet" href="app.css?v=7">
 </head>
 <body>
 
@@ -84,16 +84,20 @@
     </div>
 
     <div id="no-teams" class="empty" hidden>
+      <div class="art" aria-hidden="true"><i></i><i></i><i></i></div>
       <h2>No teams yet</h2>
       <p>Were you invited? Paste the invite link to join. Teams are created in the cardlio app on iPhone or Mac.</p>
       <button class="btn primary" type="button" id="join-open-empty" style="margin-top:16px">Join a team</button>
     </div>
 
     <div id="team-view" hidden>
-      <div class="team-head">
-        <div>
-          <h1 id="team-name"></h1>
-          <p class="team-sub" id="team-sub"></p>
+      <div class="team-hero">
+        <div class="team-head">
+          <div>
+            <h1 id="team-name"></h1>
+            <p class="team-sub" id="team-sub"></p>
+          </div>
+          <div class="people" id="team-people" aria-label="People on this team"></div>
         </div>
       </div>
 
@@ -110,11 +114,23 @@
           <button type="button" data-filter="open" aria-pressed="false">Unclaimed</button>
           <button type="button" data-filter="taken" aria-pressed="false">Claimed</button>
         </div>
+        <div class="segmented view-toggle" role="group" aria-label="View">
+          <button type="button" data-view="grid" aria-pressed="true" title="Cards">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg>
+            <span class="sr-only">Cards</span>
+          </button>
+          <button type="button" data-view="list" aria-pressed="false" title="List">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h14"/></svg>
+            <span class="sr-only">List</span>
+          </button>
+        </div>
         <label><span class="sr-only">Sort</span>
           <select class="select" id="sort">
             <option value="new">Newest first</option>
             <option value="name">Name</option>
             <option value="company">Company</option>
+            <option value="event">Event</option>
+            <option value="by">Shared by</option>
           </select>
         </label>
         <button class="btn" id="add-card" type="button" title="Add a card by hand — someone you met, typed in">
@@ -147,13 +163,16 @@
       <button class="new-pill" id="new-pill" type="button" hidden aria-live="polite"></button>
       <p class="result-line" id="result-line" aria-live="polite"></p>
       <ul class="grid" id="grid"></ul>
+      <div class="list-wrap" id="list-wrap" hidden><table class="list" id="list"><thead></thead><tbody></tbody></table></div>
       <div id="no-match" class="empty" hidden>
+        <div class="art" aria-hidden="true"><i></i><i></i><i></i></div>
         <h2>Nothing matches</h2>
         <p>Try a different search, or show all cards.</p>
       </div>
       <div id="team-empty" class="empty" hidden>
+        <div class="art" aria-hidden="true"><i></i><i></i><i></i></div>
         <h2>No cards in this team yet</h2>
-        <p>In the cardlio app, select cards and choose <b>Share with Team</b>. They appear here right away.</p>
+        <p>In the cardlio app, select cards and choose <b>Share with Team</b> — or add one here, or drop a vCard file. They appear right away.</p>
       </div>
     </div>
 
@@ -161,6 +180,23 @@
     <p class="foot-note">This page reads your teams straight from Apple's iCloud and keeps nothing. <a href="https://cardlio.app/privacy.html">Privacy</a> · <a href="https://cardlio.app/">cardlio.app</a></p>
   </main>
 </div>
+
+<!-- phone action bar -->
+<nav class="mobile-bar" id="mobile-bar" aria-label="Actions" hidden>
+  <button type="button" id="mb-search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg>Search</button>
+  <button type="button" id="mb-add"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Add</button>
+  <button type="button" id="mb-claim" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M5 19h14"/></svg>Claim all</button>
+  <button type="button" id="mb-export"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V5"/><path d="M7.5 9.5L12 5l4.5 4.5"/><path d="M5 19h14"/></svg>Export</button>
+</nav>
+
+<!-- photo lightbox -->
+<dialog id="lightbox" class="lightbox" aria-label="Card photo">
+  <img id="lb-img" alt="">
+  <div class="lb-bar">
+    <button class="icon-btn" type="button" id="lb-rotate" title="Rotate" aria-label="Rotate the photo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.9-3.9L4 8.5"/><path d="M4 4v4.5h4.5"/></svg></button>
+    <button class="icon-btn" type="button" id="lb-close" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+  </div>
+</dialog>
 
 <!-- card detail -->
 <dialog id="detail" aria-labelledby="d-name">
@@ -276,6 +312,6 @@
 
 <script src="config.js?v=1"></script>
 <script src="https://cdn.apple-cloudkit.com/ck/2/cloudkit.js"></script>
-<script src="app.js?v=6"></script>
+<script src="app.js?v=7"></script>
 </body>
 </html>

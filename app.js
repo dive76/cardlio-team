@@ -31,8 +31,11 @@
     query: "",
     event: "",
     open: null,         // record shown in the detail dialog
-    pendingNew: 0       // cards the background poll saw that are not shown yet
+    pendingNew: 0,      // cards the background poll saw that are not shown yet
+    view: storageGet("cardlio.team.view") || "grid"
   };
+  // A stable colour per person, for the avatars.
+  function personHue(name) { let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
   const myName = () => storageGet(NAME_KEY);
   const isMine = (r) => { const n = myName(); return !!n && str(r, "claimedBy").localeCompare(n, undefined, { sensitivity: "base" }) === 0; };
 
@@ -260,6 +263,8 @@
   function signedOut() {
     document.title = "cardlio Team";
     document.body.classList.add("signed-out");
+    document.body.classList.remove("signed-in-view");
+    $("mobile-bar").hidden = true;
     $("welcome").hidden = false;
     $("invite-banner").hidden = !sessionGet(PENDING_KEY);
     $("app").hidden = true;
@@ -271,9 +276,11 @@
 
   function signedIn() {
     document.body.classList.remove("signed-out");
+    document.body.classList.add("signed-in-view");
     $("welcome").hidden = true;
     $("app").hidden = false;
     $("refresh").hidden = false;
+    $("mobile-bar").hidden = false;
     container.whenUserSignsOut().then(signedOut);
     load();
   }
@@ -395,9 +402,26 @@
     $("team-name").textContent = team.name + " ";
     $("team-name").append(el("span", team.owned ? "badge" : "badge plain", team.owned ? "Yours" : "Joined"));
     const sub = [];
-    if (team.createdAt) sub.push("Started " + when(team.createdAt));
+    const stamps = records.map(scannedAt).filter(Boolean);
+    if (stamps.length) {
+      const a = when(Math.min(...stamps)), b = when(Math.max(...stamps));
+      sub.push(a === b ? "Cards from " + a : "Cards from " + a + " to " + b);
+    } else if (team.createdAt) sub.push("Started " + when(team.createdAt));
     if (!team.named) sub.push("Open the team library in the cardlio app once to show this team's name here");
     $("team-sub").textContent = sub.join(" · ");
+    // The people on the team, as the cards show them (the web API cannot
+    // read the zone-wide share's participant list — the apps can).
+    const peopleEl = $("team-people");
+    peopleEl.replaceChildren();
+    const names = [...new Set(records.flatMap((r) => [str(r, "scannedBy"), str(r, "claimedBy")]).filter(Boolean))];
+    names.slice(0, 8).forEach((n) => {
+      const a = el("span", "avatar", initials(n));
+      a.style.background = `hsl(${personHue(n)} 62% 46%)`;
+      a.title = n;
+      peopleEl.append(a);
+    });
+    if (names.length > 8) peopleEl.append(el("span", "more", "+" + (names.length - 8)));
+    if (!names.length) peopleEl.append(el("span", "none", "Nobody has shared a card yet"));
 
     state.dupes = duplicateMap(records);
     const claimed = records.filter((r) => str(r, "claimedBy")).length;
@@ -468,6 +492,8 @@
     const byText = (get) => (a, b) => get(a).localeCompare(get(b), undefined, { sensitivity: "base" });
     if (state.sort === "name") list.sort(byText((r) => str(r, "lastName") || displayName(r)));
     else if (state.sort === "company") list.sort(byText((r) => str(r, "company") || "~"));
+    else if (state.sort === "event") list.sort(byText((r) => str(r, "eventTag") || "~"));
+    else if (state.sort === "by") list.sort(byText((r) => str(r, "scannedBy") || "~"));
     else list.sort((a, b) => scannedAt(b) - scannedAt(a));
     return list;
   }
@@ -481,13 +507,72 @@
     document.querySelector(".toolbar").hidden = total === 0;
     $("no-match").hidden = !(total > 0 && list.length === 0);
     $("result-line").textContent = total ? (list.length === total ? plural(total, "card") : list.length + " of " + plural(total, "card")) : "";
-    for (const r of list) grid.append(tile(r));
+    const asList = state.view === "list";
+    grid.hidden = asList;
+    $("list-wrap").hidden = !asList || !list.length;
+    if (asList) renderList(list);
+    else list.forEach((r, i) => { const li = tile(r); li.style.setProperty("--i", Math.min(i, 24)); grid.append(li); });
     // Claim all: every unclaimed card among the ones SHOWN (the search,
     // the filter and the event chip narrow it), so "claim everything from
     // yesterday's event" is a filter plus one click.
     const open = list.filter((r) => !str(r, "claimedBy"));
     $("claim-all").hidden = open.length < 2;
     $("claim-all-label").textContent = "Claim all " + plural(open.length, "unclaimed card");
+    $("mb-claim").hidden = open.length < 2;
+  }
+
+  // 5. The list view: a dense, sortable table for a big team.
+  const LIST_COLUMNS = [
+    ["name", "Name"], ["company", "Company"], ["event", "Event"], ["by", "Shared by"], ["claimed", "Claimed by"], ["note", "Team note"]
+  ];
+  function renderList(list) {
+    const head = $("list").querySelector("thead"), body = $("list").querySelector("tbody");
+    head.replaceChildren(); body.replaceChildren();
+    const tr = el("tr");
+    for (const [key, label] of LIST_COLUMNS) {
+      const th = el("th");
+      const sortKey = { name: "name", company: "company", event: "event", by: "by" }[key];
+      if (sortKey) {
+        const b = el("button", null, label + (state.sort === sortKey ? " ↓" : ""));
+        b.type = "button";
+        if (state.sort === sortKey) b.setAttribute("aria-sort", "ascending");
+        b.addEventListener("click", () => { state.sort = sortKey; $("sort").value = sortKey; renderGrid(); });
+        th.append(b);
+      } else th.textContent = label;
+      tr.append(th);
+    }
+    head.append(tr);
+    for (const r of list) {
+      const row = el("tr");
+      row.tabIndex = 0;
+      const who = el("td");
+      const w = el("div", "who");
+      const url = photoURL(r);
+      if (url) { const img = el("img", "thumb"); img.alt = ""; img.loading = "lazy"; img.src = url; w.append(img); }
+      else w.append(el("span", "thumb face", cardInitials(r)));
+      const txt = el("span");
+      txt.append(el("b", null, displayName(r)));
+      if (str(r, "title")) txt.append(el("small", null, str(r, "title")));
+      w.append(txt); who.append(w); row.append(who);
+      row.append(el("td", null, str(r, "company")), el("td", null, str(r, "eventTag")), el("td", null, str(r, "scannedBy")));
+      const cl = el("td");
+      const claimedBy = str(r, "claimedBy");
+      cl.append(el("span", claimedBy ? "status taken" : "status open", claimedBy || "Unclaimed"));
+      row.append(cl);
+      row.append(el("td", null, str(r, "teamNotes").split(/\r?\n/).find(Boolean) || ""));
+      row.addEventListener("click", () => openDetail(r));
+      row.addEventListener("keydown", (e) => { if (e.key === "Enter") openDetail(r); });
+      body.append(row);
+    }
+  }
+  for (const b of document.querySelectorAll(".view-toggle button")) {
+    b.addEventListener("click", () => {
+      state.view = b.dataset.view;
+      storageSet("cardlio.team.view", state.view);
+      for (const x of document.querySelectorAll(".view-toggle button")) x.setAttribute("aria-pressed", String(x === b));
+      if (state.team) renderGrid();
+    });
+    b.setAttribute("aria-pressed", String(b.dataset.view === state.view));
   }
 
   function tile(r) {
@@ -496,16 +581,28 @@
     b.type = "button";
     const ph = el("div", "ph");
     const url = photoURL(r);
+    const face = () => {
+      // No photo: typeset the card AS a card (name, title, company, an
+      // accent bar) rather than a block of initials.
+      ph.classList.add("cardface");
+      ph.replaceChildren();
+      const top = el("div"), bottom = el("div");
+      top.append(el("div", "n", displayName(r)));
+      if (str(r, "title")) top.append(el("div", "t", str(r, "title")));
+      if (fullName(r) && str(r, "company")) bottom.append(el("div", "c", str(r, "company")));
+      bottom.append(el("div", "bar"));
+      ph.append(top, bottom);
+    };
     if (url) {
       const img = el("img");
       img.alt = "";
       img.loading = "lazy";
       img.decoding = "async";
       img.src = url;
-      img.addEventListener("error", () => img.replaceWith(el("span", "initials", cardInitials(r))));
+      img.addEventListener("error", face);
       ph.append(img);
     } else {
-      ph.append(el("span", "initials", cardInitials(r)));
+      face();
     }
     const tb = el("div", "tb");
     tb.append(el("div", "nm", displayName(r)));
@@ -569,6 +666,7 @@
       const img = el("img");
       img.alt = "Photo of " + displayName(r) + "'s business card";
       img.src = url;
+      img.addEventListener("click", () => openLightbox(url, img.alt));
       photo.append(img);
     } else {
       photo.append(el("span", "noimg", "No photo"));
@@ -709,6 +807,25 @@
       $("d-team-notes-save").disabled = false;
     }
   });
+
+  // 3. Lightbox: the photo full-size, zoomable, rotatable.
+  let lbTurn = 0;
+  function openLightbox(url, alt) {
+    const img = $("lb-img");
+    lbTurn = 0;
+    img.classList.remove("zoomed");
+    $("lightbox").classList.remove("scroll");
+    img.style.transform = "";
+    img.src = url; img.alt = alt;
+    $("lightbox").showModal();
+  }
+  $("lb-img").addEventListener("click", () => {
+    const z = $("lb-img").classList.toggle("zoomed");
+    $("lightbox").classList.toggle("scroll", z);
+  });
+  $("lb-rotate").addEventListener("click", () => { lbTurn = (lbTurn + 1) % 4; $("lb-img").style.transform = "rotate(" + lbTurn * 90 + "deg)"; });
+  $("lb-close").addEventListener("click", () => $("lightbox").close());
+  $("lightbox").addEventListener("click", (e) => { if (e.target === $("lightbox")) $("lightbox").close(); });
 
   $("d-close").addEventListener("click", () => $("detail").close());
   $("detail").addEventListener("click", (e) => { if (e.target === $("detail")) $("detail").close(); });
@@ -1490,6 +1607,11 @@
     if (t) selectTeam(t);
   });
   $("refresh").addEventListener("click", () => load());
+  // 7. The phone's bottom bar mirrors the toolbar's four actions.
+  $("mb-search").addEventListener("click", () => { $("search").scrollIntoView({ block: "center" }); $("search").focus(); });
+  $("mb-add").addEventListener("click", () => openCardForm(null));
+  $("mb-claim").addEventListener("click", () => $("claim-all").click());
+  $("mb-export").addEventListener("click", () => { $("export-btn").scrollIntoView({ block: "center" }); setMenu(true); });
 
   const exportBtn = $("export-btn"), exportMenu = $("export-menu");
   function setMenu(open) {
