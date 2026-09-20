@@ -14,7 +14,7 @@
 <meta name="theme-color" content="#4F46E5">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="assets/icon-192.png">
-<link rel="stylesheet" href="app.css?v=7">
+<link rel="stylesheet" href="app.css?v=8">
 </head>
 <body>
 
@@ -109,10 +109,12 @@
           <span class="sr-only">Search cards</span>
           <input id="search" type="search" placeholder="Search name, company, email, city…" autocomplete="off" spellcheck="false">
         </label>
-        <div class="segmented" role="group" aria-label="Show">
+        <div class="segmented" id="filter-group" role="group" aria-label="Show">
           <button type="button" data-filter="all" aria-pressed="true">All</button>
           <button type="button" data-filter="open" aria-pressed="false">Unclaimed</button>
           <button type="button" data-filter="taken" aria-pressed="false">Claimed</button>
+          <button type="button" data-filter="mine" aria-pressed="false" title="Cards claimed under your name">Mine</button>
+          <button type="button" data-filter="notes" aria-pressed="false" title="Cards that carry a team note">With notes</button>
         </div>
         <div class="segmented view-toggle" role="group" aria-label="View">
           <button type="button" data-view="grid" aria-pressed="true" title="Cards">
@@ -155,6 +157,7 @@
             <button type="button" role="menuitem" data-export="vcf">Contacts (vCard)<small>For Apple Contacts, Outlook, Google</small></button>
             <button type="button" role="menuitem" data-export="csv">Spreadsheet (CSV)<small>For Excel, Numbers, a CRM import</small></button>
             <button type="button" role="menuitem" data-export="zip">Everything (ZIP)<small>vCards with photos, the CSV, and the card photos</small></button>
+            <button type="button" role="menuitem" data-export="print">Print sheet<small>A roster of the cards shown, for the morning huddle</small></button>
           </div>
         </div>
       </div>
@@ -164,6 +167,7 @@
       <p class="result-line" id="result-line" aria-live="polite"></p>
       <ul class="grid" id="grid"></ul>
       <div class="list-wrap" id="list-wrap" hidden><table class="list" id="list"><thead></thead><tbody></tbody></table></div>
+      <p class="fine sel-hint" id="sel-hint" hidden>Tick cards to claim, download or export just those. Shift-click ticks a range.</p>
       <div id="no-match" class="empty" hidden>
         <div class="art" aria-hidden="true"><i></i><i></i><i></i></div>
         <h2>Nothing matches</h2>
@@ -180,6 +184,22 @@
     <p class="foot-note">This page reads your teams straight from Apple's iCloud and keeps nothing. <a href="https://cardlio.app/privacy.html">Privacy</a> · <a href="https://cardlio.app/">cardlio.app</a></p>
   </main>
 </div>
+
+<!-- selection bar (12) -->
+<div class="sel-bar" id="sel-bar" hidden role="region" aria-label="Selected cards">
+  <b id="sel-count">0 selected</b>
+  <button class="link" type="button" id="sel-all">Select all shown</button>
+  <button class="link" type="button" id="sel-none">Clear</button>
+  <span class="spacer"></span>
+  <button class="btn primary" type="button" id="sel-claim">Claim</button>
+  <button class="btn" type="button" id="sel-vcf">vCard</button>
+  <button class="btn" type="button" id="sel-csv">CSV</button>
+  <button class="btn" type="button" id="sel-zip">ZIP</button>
+  <button class="btn" type="button" id="sel-print">Print</button>
+</div>
+
+<!-- print sheet (9): filled on beforeprint, shown only on paper -->
+<section class="print-sheet" id="print-sheet" aria-hidden="true"></section>
 
 <!-- phone action bar -->
 <nav class="mobile-bar" id="mobile-bar" aria-label="Actions" hidden>
@@ -312,6 +332,6 @@
 
 <script src="config.js?v=1"></script>
 <script src="https://cdn.apple-cloudkit.com/ck/2/cloudkit.js"></script>
-<script src="app.js?v=7"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>

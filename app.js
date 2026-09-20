@@ -26,8 +26,9 @@
   const state = {
     teams: [],          // { id, zoneID, db, owned, name, records: [...] }
     team: null,
-    filter: "all",
-    sort: "new",
+    filter: storageGet("cardlio.team.filter") || "all",
+    sort: storageGet("cardlio.team.sort") || "new",
+    selected: new Set(),   // recordNames ticked for a bulk action (12)
     query: "",
     event: "",
     open: null,         // record shown in the detail dialog
@@ -369,6 +370,7 @@
   }
 
   function selectTeam(team) {
+    if (state.team !== team) state.selected.clear();
     state.team = team;
     state.event = "";
     $("new-pill").hidden = !(team.pendingRecords && team.pendingRecords.length);
@@ -482,6 +484,8 @@
       const taken = !!str(r, "claimedBy");
       if (state.filter === "open" && taken) return false;
       if (state.filter === "taken" && !taken) return false;
+      if (state.filter === "mine" && !isMine(r)) return false;
+      if (state.filter === "notes" && !str(r, "teamNotes").trim()) return false;
       if (state.event && str(r, "eventTag") !== state.event) return false;
       if (!q) return true;
       const hay = fold([fullName(r), str(r, "title"), str(r, "company"), emails(r).join(" "),
@@ -510,8 +514,15 @@
     const asList = state.view === "list";
     grid.hidden = asList;
     $("list-wrap").hidden = !asList || !list.length;
+    // A ticked card that left the team (deleted in the app) leaves the selection.
+    const alive = new Set(state.team.records.map((r) => r.recordName));
+    for (const id of state.selected) if (!alive.has(id)) state.selected.delete(id);
     if (asList) renderList(list);
     else list.forEach((r, i) => { const li = tile(r); li.style.setProperty("--i", Math.min(i, 24)); grid.append(li); });
+    $("sel-hint").hidden = !(list.length > 1 && !state.selected.size);
+    if (state.filter === "mine" && !myName() && total) $("no-match").querySelector("p").textContent = "Claim a card first — \"Mine\" shows the cards claimed under your name.";
+    else $("no-match").querySelector("p").textContent = "Try a different search, or show all cards.";
+    renderSelectionBar(list);
     // Claim all: every unclaimed card among the ones SHOWN (the search,
     // the filter and the event chip narrow it), so "claim everything from
     // yesterday's event" is a filter plus one click.
@@ -529,6 +540,12 @@
     const head = $("list").querySelector("thead"), body = $("list").querySelector("tbody");
     head.replaceChildren(); body.replaceChildren();
     const tr = el("tr");
+    const allTh = el("th", "pick-cell");
+    const allBox = el("input"); allBox.type = "checkbox";
+    allBox.setAttribute("aria-label", "Select all shown");
+    allBox.checked = list.length > 0 && list.every((r) => state.selected.has(r.recordName));
+    allBox.addEventListener("change", () => { if (allBox.checked) list.forEach((r) => state.selected.add(r.recordName)); else list.forEach((r) => state.selected.delete(r.recordName)); renderGrid(); });
+    allTh.append(allBox); tr.append(allTh);
     for (const [key, label] of LIST_COLUMNS) {
       const th = el("th");
       const sortKey = { name: "name", company: "company", event: "event", by: "by" }[key];
@@ -545,6 +562,12 @@
     for (const r of list) {
       const row = el("tr");
       row.tabIndex = 0;
+      row.classList.toggle("picked", state.selected.has(r.recordName));
+      const pc = el("td", "pick-cell");
+      const box = el("input"); box.type = "checkbox"; box.checked = state.selected.has(r.recordName);
+      box.setAttribute("aria-label", "Select " + displayName(r));
+      box.addEventListener("click", (e) => { e.stopPropagation(); togglePick(r, list, e.shiftKey); });
+      pc.append(box); row.append(pc);
       const who = el("td");
       const w = el("div", "who");
       const url = photoURL(r);
@@ -623,8 +646,102 @@
     b.setAttribute("aria-label", displayName(r) + (role ? ", " + role : "") + (claimedBy ? ", claimed by " + claimedBy : ", unclaimed"));
     b.addEventListener("click", () => openDetail(r));
     li.append(b);
+    // 12. The tick for a bulk action — a sibling of the tile button.
+    const pick = el("button", "pick");
+    pick.type = "button";
+    pick.setAttribute("aria-pressed", String(state.selected.has(r.recordName)));
+    pick.setAttribute("aria-label", "Select " + displayName(r));
+    pick.append(icon("check"));
+    pick.addEventListener("click", (e) => { e.stopPropagation(); togglePick(r, visibleRecords(), e.shiftKey); });
+    li.classList.toggle("picked", state.selected.has(r.recordName));
+    li.append(pick);
     return li;
   }
+
+  // 12. Multi-select: tick tiles, then claim / download / export just those.
+  let lastPick = null;
+  function togglePick(r, list, range) {
+    const on = !state.selected.has(r.recordName);
+    if (range && lastPick) {
+      const a = list.findIndex((x) => x.recordName === lastPick), b = list.findIndex((x) => x.recordName === r.recordName);
+      if (a >= 0 && b >= 0) {
+        for (const x of list.slice(Math.min(a, b), Math.max(a, b) + 1)) { if (on) state.selected.add(x.recordName); else state.selected.delete(x.recordName); }
+        lastPick = r.recordName; renderGrid(); return;
+      }
+    }
+    if (on) state.selected.add(r.recordName); else state.selected.delete(r.recordName);
+    lastPick = r.recordName;
+    renderGrid();
+  }
+  function selectedRecords() {
+    // In the current sort order, whether or not the filter still shows them.
+    const order = new Map(visibleRecords().map((r, i) => [r.recordName, i]));
+    return state.team.records.filter((r) => state.selected.has(r.recordName))
+      .sort((a, b) => (order.get(a.recordName) ?? 1e9) - (order.get(b.recordName) ?? 1e9));
+  }
+  function renderSelectionBar(shown) {
+    const n = state.selected.size;
+    $("sel-bar").hidden = n === 0;
+    if (!n) return;
+    const sel = selectedRecords();
+    const open = sel.filter((r) => !str(r, "claimedBy"));
+    const hiddenCount = sel.filter((r) => !shown.includes(r)).length;
+    $("sel-count").textContent = plural(n, "card") + " selected" + (hiddenCount ? " (" + hiddenCount + " not shown)" : "");
+    $("sel-all").hidden = shown.every((r) => state.selected.has(r.recordName));
+    $("sel-claim").hidden = open.length === 0;
+    $("sel-claim").textContent = open.length === n ? "Claim" : "Claim " + open.length + " unclaimed";
+  }
+  $("sel-all").addEventListener("click", () => { visibleRecords().forEach((r) => state.selected.add(r.recordName)); renderGrid(); });
+  $("sel-none").addEventListener("click", () => { state.selected.clear(); renderGrid(); });
+  $("sel-claim").addEventListener("click", () => { const open = selectedRecords().filter((r) => !str(r, "claimedBy")); if (open.length) askClaimAll(open); });
+  $("sel-vcf").addEventListener("click", async () => { const s = selectedRecords(); await downloadVCard(s, false); toast("Exported " + plural(s.length, "card")); });
+  $("sel-csv").addEventListener("click", () => { const s = selectedRecords(); downloadCSV(s); toast("Exported " + plural(s.length, "card")); });
+  $("sel-zip").addEventListener("click", async () => { const s = selectedRecords(); toast("Packing " + plural(s.length, "card") + "…"); await downloadZip(s); toast("Exported " + plural(s.length, "card")); });
+  $("sel-print").addEventListener("click", () => printSheet(selectedRecords(), "selected"));
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && state.selected.size && !$("detail").open && !document.querySelector("dialog[open]")) { state.selected.clear(); renderGrid(); }
+  });
+
+  // 9. Print sheet: a roster on paper, built when printing starts.
+  let printScope = null;   // records to print, or null for "the cards shown"
+  function printSheet(records, label) {
+    printScope = { records, label };
+    window.print();
+  }
+  function buildPrintSheet() {
+    if (!state.team) return;
+    const scope = printScope || { records: visibleRecords(), label: null };
+    const sheet = $("print-sheet");
+    sheet.replaceChildren();
+    sheet.append(el("h1", null, state.team.name));
+    const what = scope.label === "selected" ? plural(scope.records.length, "selected card")
+      : (scope.records.length === state.team.records.length ? plural(scope.records.length, "card") : scope.records.length + " of " + plural(state.team.records.length, "card") + " (filtered)");
+    const bits = [what];
+    if (state.event) bits.push(state.event);
+    if (state.query.trim()) bits.push("search: " + state.query.trim());
+    bits.push("printed " + new Date().toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }));
+    sheet.append(el("p", "meta", bits.join(" · ")));
+    const table = el("table"), thead = el("thead"), tbody = el("tbody");
+    const hr = el("tr");
+    for (const h of ["", "Name", "Company", "Contact", "Shared by", "Claimed by", "Team note"]) hr.append(el("th", h ? null : "tick", h));
+    thead.append(hr);
+    for (const r of scope.records) {
+      const tr = el("tr");
+      const tick = el("td", "tick"); tick.append(el("i")); tr.append(tick);
+      const nm = el("td"); nm.append(el("b", null, displayName(r))); if (str(r, "title")) nm.append(el("small", null, str(r, "title"))); tr.append(nm);
+      const co = el("td"); co.append(el("span", null, str(r, "company"))); const place = [str(r, "city"), str(r, "country")].filter(Boolean).join(", "); if (place) co.append(el("small", null, place)); tr.append(co);
+      const ct = el("td"); for (const line of [emails(r)[0], str(r, "mobile") || str(r, "phone")].filter(Boolean)) ct.append(el("div", null, line)); tr.append(ct);
+      tr.append(el("td", null, [str(r, "scannedBy"), when(scannedAt(r))].filter(Boolean).join("\n")));
+      tr.append(el("td", str(r, "claimedBy") ? "claimed" : null, str(r, "claimedBy") || "—"));
+      tr.append(el("td", "note", str(r, "teamNotes")));
+      tbody.append(tr);
+    }
+    table.append(thead, tbody);
+    sheet.append(table);
+    sheet.append(el("p", "foot", "team.cardlio.app · " + state.team.name));
+  }
+  window.addEventListener("beforeprint", buildPrintSheet);
+  window.addEventListener("afterprint", () => { printScope = null; });
 
   // ---------------------------------------------------------------- detail
 
@@ -876,6 +993,7 @@
       $("claim-dialog").close();
     }
     if (won.length) downloadVCard(won, true);
+    for (const r of won) state.selected.delete(r.recordName);
     renderTeam();
     if (state.open && claiming.includes(state.open)) openDetail(state.open);
     if (failure) toast(failure.message || errorText(failure), true);
@@ -1184,6 +1302,13 @@
     // phone number ("+81 3 5555 0199") is not one and stays as printed.
     if (/^[=+\-@\t\r]/.test(s) && !/^\+[\d\s().\/-]+$/.test(s)) s = "'" + s;
     return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+  async function downloadZip(records) {
+    const z = await exportZip(records);
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(z.blob); a.download = fileSafe(state.team.name) + ".zip";
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   }
   function downloadCSV(records) {
     saveFile(fileSafe(state.team.name) + ".csv", "text/csv;charset=utf-8", csvText(records));
@@ -1594,14 +1719,18 @@
   // --------------------------------------------------------------- toolbar
 
   $("search").addEventListener("input", (e) => { state.query = e.target.value; renderGrid(); });
-  for (const b of document.querySelectorAll(".segmented button")) {
+  for (const b of document.querySelectorAll("#filter-group button")) {
     b.addEventListener("click", () => {
       state.filter = b.dataset.filter;
-      for (const x of document.querySelectorAll(".segmented button")) x.setAttribute("aria-pressed", String(x === b));
+      storageSet("cardlio.team.filter", state.filter);
+      for (const x of document.querySelectorAll("#filter-group button")) x.setAttribute("aria-pressed", String(x === b));
       renderGrid();
     });
+    b.setAttribute("aria-pressed", String(b.dataset.filter === state.filter));
   }
-  $("sort").addEventListener("change", (e) => { state.sort = e.target.value; renderGrid(); });
+  if (![...document.querySelectorAll("#filter-group button")].some((b) => b.dataset.filter === state.filter)) state.filter = "all";
+  $("sort").addEventListener("change", (e) => { state.sort = e.target.value; storageSet("cardlio.team.sort", state.sort); renderGrid(); });
+  if ([...$("sort").options].some((o) => o.value === state.sort)) $("sort").value = state.sort; else state.sort = "new";
   $("team-select").addEventListener("change", (e) => {
     const t = state.teams.find((x) => x.id === e.target.value);
     if (t) selectTeam(t);
@@ -1630,12 +1759,9 @@
       if (b.dataset.export === "csv") downloadCSV(list);
       else if (b.dataset.export === "zip") {
         toast("Packing " + plural(list.length, "card") + "…");
-        const z = await exportZip(list);
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(z.blob); a.download = fileSafe(state.team.name) + ".zip";
-        document.body.append(a); a.click(); a.remove();
-        setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-      } else await downloadVCard(list, false);
+        await downloadZip(list);
+      } else if (b.dataset.export === "print") { printSheet(null, null); return; }
+      else await downloadVCard(list, false);
       toast("Exported " + plural(list.length, "card"));
     });
   }
