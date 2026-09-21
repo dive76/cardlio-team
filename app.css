@@ -594,3 +594,27 @@ dialog[open] { animation: dialog-in 0.22s ease; }
   .print-sheet .claimed { font-weight: 700; }
   .print-sheet .foot { margin-top: 6mm; font-size: 8.5pt; color: #666; }
 }
+
+/* ================= 2026-09-21: read a card photo with your own Claude / Gemini key ================= */
+.btn.icon-only { padding: 8px 9px; }
+.btn.icon-only svg { margin: 0; }
+#k-provider { margin: 4px 0 12px; }
+.small-dialog label.check { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--muted); margin-top: 6px; }
+.small-dialog label.check input { width: 16px; height: 16px; accent-color: var(--accent); }
+.scan-dialog { text-align: center; }
+.scan-dialog img { display: block; max-width: 100%; max-height: 220px; margin: 0 auto 12px; border-radius: 10px; box-shadow: var(--shadow); object-fit: contain; }
+.scan-dialog p { margin: 0 0 12px; font-weight: 600; }
+.scan-dialog p::after { content: ""; display: inline-block; width: 14px; height: 14px; margin-left: 8px; vertical-align: -2px; border-radius: 50%; border: 2px solid var(--accent); border-right-color: transparent; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.scan-strip { display: flex; gap: 12px; align-items: center; margin: 0 0 12px; padding: 10px; border-radius: 12px; background: var(--bg-sunken); border: 1px solid var(--line); }
+.scan-strip img { width: 120px; height: 76px; object-fit: cover; border-radius: 8px; flex: none; background: var(--card-face); }
+.scan-strip div { display: grid; gap: 2px; min-width: 0; font-size: 13px; color: var(--muted); }
+.scan-strip b { color: var(--ink); font-size: 13.5px; }
+.scan-strip .link { border: 0; background: none; color: var(--accent); font: inherit; font-size: 13px; font-weight: 600; padding: 0; cursor: pointer; justify-self: start; }
+@media (max-width: 700px) { #scan-photo { display: none; } }
+
+/* The filter group on a phone: no wrapping inside a segment, scroll the row instead. */
+@media (max-width: 700px) {
+  #filter-group { max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  #filter-group button { white-space: nowrap; }
+}

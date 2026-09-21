@@ -1368,11 +1368,23 @@
   const FORM_FIELDS = ["firstName", "lastName", "title", "company", "emails", "phone", "mobile", "website",
     "street", "unit", "postalCode", "city", "country", "eventTag", "notes"];
   let editing = null;
-  function openCardForm(r) {
+  let formPhoto = null;   // a Blob read from a card photo, saved with the new card
+  function openCardForm(r, prefill) {
     editing = r || null;
     const form = $("card-form");
     form.reset();
     $("f-error").hidden = true;
+    formPhoto = null;
+    $("f-scan").hidden = true;
+    if (prefill) {
+      for (const k of FORM_FIELDS) if (prefill.fields[k] != null) form.elements[k].value = prefill.fields[k];
+      if (prefill.photo) {
+        formPhoto = prefill.photo;
+        $("f-photo").src = URL.createObjectURL(prefill.photo);
+        $("f-scan-title").textContent = "Read by " + prefill.engine;
+        $("f-scan").hidden = false;
+      }
+    }
     $("f-title").textContent = r ? "Edit card" : "Add a card";
     $("f-text").textContent = r
       ? "Changes the card for the whole team. Copies colleagues already claimed into their own libraries stay as they are."
@@ -1381,9 +1393,11 @@
     $("f-by-label").hidden = !!r;
     if (r) for (const k of FORM_FIELDS) form.elements[k].value = k === "emails" ? emails(r).join(", ") : str(r, k);
     else form.elements.scannedBy.value = myName();
+    if (prefill && !form.elements.eventTag.value && state.event) form.elements.eventTag.value = state.event;
     $("card-dialog").showModal();
     form.elements.firstName.focus();
   }
+  $("f-scan-drop").addEventListener("click", () => { formPhoto = null; $("f-scan").hidden = true; });
   $("add-card").addEventListener("click", () => openCardForm(null));
   $("f-cancel").addEventListener("click", () => $("card-dialog").close());
   $("card-form").addEventListener("submit", async (e) => {
@@ -1406,8 +1420,8 @@
       } else {
         const by = v("scannedBy") || "Someone";
         storageSet(NAME_KEY, by);
-        await createCard(fields, by);
-        toast("Added to " + state.team.name);
+        const made = await createCard(fields, by, formPhoto);
+        toast("Added to " + state.team.name + (formPhoto && !made.photoSaved ? " — without the photo (iCloud refused the upload)" : ""));
       }
       $("card-dialog").close();
       renderTeamNav();
@@ -1544,10 +1558,14 @@
   async function importFiles(files) {
     if (!state.team) { toast("Open a team first", true); return; }
     const parsed = [];
+    const photos = files.filter((f) => /^image\//.test(f.type));
     for (const file of files) {
-      if (!/\.vcf$/i.test(file.name) && !/vcard/i.test(file.type)) { toast(file.name + " is not a vCard file", true); continue; }
+      if (photos.includes(file)) continue;
+      if (!/\.vcf$/i.test(file.name) && !/vcard/i.test(file.type)) { toast(file.name + " is not a vCard or image file", true); continue; }
       parsed.push(...parseVCards(await file.text()));
     }
+    if (photos.length) scanPhotos(photos);
+    if (!parsed.length) return;
     const usable = parsed.filter((c) => c.firstName || c.lastName || c.company);
     if (!usable.length) { toast("No contacts found in that file", true); return; }
     importing = usable;
@@ -1604,6 +1622,191 @@
   $("import-vcf").addEventListener("click", () => $("vcf-file").click());
   $("vcf-file").addEventListener("change", async (e) => { await importFiles([...e.target.files]); e.target.value = ""; });
 
+  // ------------------------------------------- read a card photo (BYOK)
+  //
+  // The same call the apps make for "Refine with Claude / Gemini": the
+  // photo, downscaled to 1600 px, and the apps' own extraction prompt —
+  // one prompt, two clients, the same fields back. The member's own key
+  // (Anthropic allows a browser call with an explicit header; Gemini with
+  // a key restricted to this site) lives in this browser only. The
+  // fields pre-fill the Add card form for a check; the photo is saved as
+  // the record's asset exactly like a vCard photo.
+  const AI = {
+    prompt: "You extract structured contact details from the photo of a single business card. When two photos are given they are the FRONT and the BACK of the same card — read both; the address, phone or e-mail is often printed on the back only.\n\nReturn ONLY valid JSON matching this schema exactly. No markdown, no commentary.\n{\n  \"firstName\": \"\",\n  \"lastName\": \"\",\n  \"honorific\": \"\",\n  \"title\": \"\",\n  \"company\": \"\",\n  \"emails\": [],\n  \"phone\": \"\",\n  \"mobile\": \"\",\n  \"fax\": \"\",\n  \"website\": \"\",\n  \"building\": \"\",\n  \"street\": \"\",\n  \"unit\": \"\",\n  \"postalCode\": \"\",\n  \"city\": \"\",\n  \"country\": \"\",\n  \"isoCountryCode\": \"\"\n}\n\nRules:\n- Use empty strings (or empty array) for fields not on the card.\n- emails: ALL email addresses on the card, primary first.\n- phone / mobile / fax: pick the labeled one. Unlabeled numbers go in phone unless one is clearly a cell.\n- building: building / development name (e.g. \"The Concourse\", \"Marina Bay Financial Centre Tower 1\"). Empty if none.\n- unit: level + unit / suite / floor (\"#08-15\", \"Suite 1500\", \"Apt 4B\"). Empty if none.\n- street: street address line (e.g. \"300 Beach Road\").\n- city: locality. For city-states, the city IS the country (Singapore → city \"Singapore\").\n- country: full English country name (\"Singapore\", \"United Kingdom\", \"Germany\").\n- isoCountryCode: ISO 3166-1 alpha-2 (\"SG\", \"GB\", \"DE\").\n- GENDER honorifics (\"Mr.\", \"Mrs.\", \"Ms.\", \"Miss\", \"Herr\", \"Frau\") are NOT part of the name and should be DROPPED entirely. Do NOT put them in `honorific`.\n- ACADEMIC and PROFESSIONAL honorifics / ranks — \"Dr.\", \"Dr.-Ing.\", \"PhD\", \"Ph.D.\", \"Prof.\", \"Professor\", \"Capt.\", \"Captain\", \"Lt.\", \"Col.\", \"Chief Engineer\", \"Chief Officer\", \"Ing.\", \"Rev.\", \"Sister\" — go into the `honorific` field, NOT into firstName / lastName. If the card prints \"Capt. N. P. Singh\", set honorific=\"Capt.\", firstName=\"N. P.\", lastName=\"Singh\". Multiple credentials combine with spaces (\"Dr. PhD\").\n- For \"James P. Smith\" → firstName \"James P.\", lastName \"Smith\".\n- European particles (\"van der Berg\", \"de la Cruz\") stay with lastName.\n- If the card has the name in BOTH Latin and a non-Latin script, prefer the Latin version.\n- Do not invent values. An empty string is safer than wrong.\n- Output JSON only.\nAddress conventions — follow these exactly:\n- city: the city name ALONE. Never include a prefecture, province, state or region, and drop a \"-shi\" or \"-City\" suffix from the city name.\n- postalCode: the code itself only. If the code is printed with a country letter prefix before a dash, omit that prefix and the dash.",
+    claude: { model: "claude-sonnet-4-6", url: "https://api.anthropic.com/v1/messages", label: "Claude", console: "console.anthropic.com" },
+    gemini: { model: "gemini-2.5-flash", url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent", label: "Gemini", console: "aistudio.google.com" }
+  };
+  const KEY_KEYS = { claude: "cardlio.team.key.claude", gemini: "cardlio.team.key.gemini" };
+  function sessionGet(k) { try { return sessionStorage.getItem(k) || ""; } catch (e) { return ""; } }
+  function sessionSet(k, v) { try { sessionStorage.setItem(k, v); } catch (e) { /* private mode */ } }
+  function aiKey(p) { return sessionGet(KEY_KEYS[p]) || storageGet(KEY_KEYS[p]); }
+  function aiProvider() { const p = storageGet("cardlio.team.ai"); return p === "gemini" ? "gemini" : "claude"; }
+  function setKeyForm(p) {
+    for (const b of document.querySelectorAll("#k-provider button")) b.setAttribute("aria-pressed", String(b.dataset.provider === p));
+    $("k-claude-label").hidden = p !== "claude";
+    $("k-gemini-label").hidden = p !== "gemini";
+    $("k-fine").textContent = "Get a key at " + AI[p].console + ". A card costs about a cent." + (p === "gemini" ? " Restrict the key to this site (HTTP referrer team.cardlio.app) in Google AI Studio." : "");
+  }
+  let keysThen = null;   // what to do once a key is saved (a scan that was waiting)
+  function openKeys(then) {
+    keysThen = then || null;
+    const p = aiProvider();
+    setKeyForm(p);
+    $("k-claude").value = aiKey("claude");
+    $("k-gemini").value = aiKey("gemini");
+    $("k-remember").checked = !!(storageGet(KEY_KEYS.claude) || storageGet(KEY_KEYS.gemini));
+    $("k-forget").hidden = !(aiKey("claude") || aiKey("gemini"));
+    $("k-error").hidden = true;
+    $("keys-dialog").showModal();
+    $(p === "gemini" ? "k-gemini" : "k-claude").focus();
+  }
+  for (const b of document.querySelectorAll("#k-provider button")) b.addEventListener("click", () => { storageSet("cardlio.team.ai", b.dataset.provider); setKeyForm(b.dataset.provider); });
+  $("ai-keys").addEventListener("click", () => openKeys(null));
+  $("k-cancel").addEventListener("click", () => { keysThen = null; $("keys-dialog").close(); });
+  $("k-forget").addEventListener("click", () => {
+    for (const k of Object.values(KEY_KEYS)) { try { localStorage.removeItem(k); sessionStorage.removeItem(k); } catch (e) { /* */ } }
+    $("k-claude").value = ""; $("k-gemini").value = ""; $("k-forget").hidden = true;
+    toast("Keys forgotten");
+  });
+  $("keys-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const p = aiProvider();
+    const claude = $("k-claude").value.trim(), gemini = $("k-gemini").value.trim();
+    if (!(p === "claude" ? claude : gemini)) { $("k-error").textContent = "Paste the " + AI[p].label + " key first."; $("k-error").hidden = false; return; }
+    const remember = $("k-remember").checked;
+    for (const [prov, val] of [["claude", claude], ["gemini", gemini]]) {
+      try { localStorage.removeItem(KEY_KEYS[prov]); sessionStorage.removeItem(KEY_KEYS[prov]); } catch (err) { /* */ }
+      if (val) (remember ? storageSet : sessionSet)(KEY_KEYS[prov], val);
+    }
+    $("keys-dialog").close();
+    const then = keysThen; keysThen = null;
+    if (then) then();
+  });
+
+  // Downscale to 1600 px on the long side, JPEG 0.85, upright per EXIF —
+  // what the apps send. Claude refuses images past 5 MB; a phone photo
+  // is 8–12 MB raw.
+  async function downscaledJPEG(file, maxDim) {
+    let bitmap;
+    try { bitmap = await createImageBitmap(file, { imageOrientation: "from-image" }); }
+    catch (e) { bitmap = await createImageBitmap(file); }
+    const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+    const w = Math.max(1, Math.round(bitmap.width * scale)), h = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, w, h);
+    bitmap.close && bitmap.close();
+    const blob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", 0.85));
+    if (!blob) throw new Error("Could not read that image");
+    return blob;
+  }
+  function base64Of(blob) {
+    return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1]); r.onerror = () => rej(new Error("Could not read that image")); r.readAsDataURL(blob); });
+  }
+  async function readCardWith(provider, key, jpeg, signal) {
+    const b64 = await base64Of(jpeg);
+    let res;
+    if (provider === "claude") {
+      res = await fetch(AI.claude.url, {
+        method: "POST", signal,
+        headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
+        body: JSON.stringify({
+          model: AI.claude.model, max_tokens: 1024,
+          system: [{ type: "text", text: AI.prompt, cache_control: { type: "ephemeral" } }],
+          messages: [{ role: "user", content: [
+            { type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64 } },
+            { type: "text", text: "Extract the structured contact fields from this business card." }
+          ] }]
+        })
+      });
+    } else {
+      res = await fetch(AI.gemini.url, {
+        method: "POST", signal,
+        headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+        body: JSON.stringify({
+          contents: [{ parts: [
+            { inline_data: { mime_type: "image/jpeg", data: b64 } },
+            { text: "Extract the structured contact fields from this business card." }
+          ] }],
+          systemInstruction: { parts: [{ text: AI.prompt }] },
+          generationConfig: { responseMimeType: "application/json", maxOutputTokens: 8192 }
+        })
+      });
+    }
+    if (!res.ok) {
+      let detail = "";
+      try { const j = await res.json(); detail = (j.error && (j.error.message || j.error.type)) || ""; } catch (e) { /* */ }
+      if (res.status === 401 || res.status === 403) throw Object.assign(new Error(AI[provider].label + " rejected the key" + (detail ? ": " + detail : "")), { badKey: true });
+      if (res.status === 429) throw new Error(AI[provider].label + " is rate-limiting — try again in a minute");
+      throw new Error(AI[provider].label + " answered " + res.status + (detail ? ": " + detail : ""));
+    }
+    const j = await res.json();
+    let text = "";
+    if (provider === "claude") text = ((j.content || []).map((b) => b.text || "")).join("");
+    else text = (((j.candidates || [])[0] || {}).content || { parts: [] }).parts.map((p) => p.text || "").join("");
+    const a = text.indexOf("{"), b = text.lastIndexOf("}");
+    if (a < 0 || b < a) throw new Error(AI[provider].label + " returned no fields");
+    return JSON.parse(text.slice(a, b + 1));
+  }
+  // The model's schema → the form (a TeamCard has no honorific, fax or
+  // building: building joins the street line, fax and honorific go to the
+  // notes, as the vCard import does with extra numbers).
+  function formFieldsFrom(m) {
+    const s = (k) => (typeof m[k] === "string" ? m[k].trim() : "");
+    const f = {
+      firstName: s("firstName"), lastName: s("lastName"), title: s("title"), company: s("company"),
+      emails: (Array.isArray(m.emails) ? m.emails : []).map((e) => String(e).trim()).filter(Boolean).join(", "),
+      phone: s("phone"), mobile: s("mobile"), website: s("website"),
+      street: [s("building"), s("street")].filter(Boolean).join(", "),
+      unit: s("unit"), postalCode: s("postalCode"), city: s("city"), country: s("country")
+    };
+    const notes = [];
+    if (s("honorific")) notes.push(s("honorific"));
+    if (s("fax")) notes.push("Fax: " + s("fax"));
+    if (notes.length) f.notes = notes.join("\n");
+    return f;
+  }
+  let scanQueue = [], scanning = false, scanAbort = null;
+  function scanPhotos(files) {
+    if (!state.team) { toast("Open a team first", true); return; }
+    scanQueue.push(...files);
+    if (!scanning) nextScan();
+  }
+  async function nextScan() {
+    const file = scanQueue.shift();
+    if (!file) { scanning = false; return; }
+    scanning = true;
+    const provider = aiProvider();
+    if (!aiKey(provider)) { scanQueue.unshift(file); scanning = false; openKeys(() => nextScan()); return; }
+    let jpeg;
+    try { jpeg = await downscaledJPEG(file, 1600); }
+    catch (err) { toast(err.message, true); return nextScan(); }
+    $("s-photo").src = URL.createObjectURL(jpeg);
+    $("s-text").textContent = "Reading the card with " + AI[provider].label + "…" + (scanQueue.length ? " (" + scanQueue.length + " more waiting)" : "");
+    if (!$("scan-dialog").open) $("scan-dialog").showModal();
+    scanAbort = new AbortController();
+    try {
+      const m = await readCardWith(provider, aiKey(provider), jpeg, scanAbort.signal);
+      $("scan-dialog").close();
+      openCardForm(null, { fields: formFieldsFrom(m), photo: jpeg, engine: AI[provider].label });
+      // The next photo waits until this form is closed.
+      $("card-dialog").addEventListener("close", () => nextScan(), { once: true });
+    } catch (err) {
+      $("scan-dialog").close();
+      if (err.name === "AbortError") { scanQueue = []; scanning = false; return; }
+      if (err.badKey) { scanQueue.unshift(file); scanning = false; toast(err.message, true); openKeys(() => nextScan()); return; }
+      if (err instanceof TypeError) toast("Could not reach " + AI[provider].label + " — offline, or the browser blocked the call", true);
+      else toast(err.message, true);
+      nextScan();
+    }
+  }
+  $("s-cancel").addEventListener("click", () => { if (scanAbort) scanAbort.abort(); $("scan-dialog").close(); });
+  $("scan-photo").addEventListener("click", () => $("photo-file").click());
+  $("photo-file").addEventListener("change", (e) => { scanPhotos([...e.target.files]); e.target.value = ""; });
+  // On a phone the same input offers the camera or the photo library.
+  $("mb-scan").addEventListener("click", () => $("photo-file").click());
+  if (cfg.testHooks) { window.__cardlioScan = (files) => scanPhotos(files); window.__cardlioReadCard = readCardWith; }
+
   // Drop anywhere on the page while signed in.
   let dragDepth = 0;
   const hasFiles = (e) => e.dataTransfer && [...e.dataTransfer.types].includes("Files");
@@ -1611,7 +1814,7 @@
     if (!hasFiles(e) || $("app").hidden) return;
     e.preventDefault();
     dragDepth++;
-    $("drop-into").textContent = state.team ? "into " + state.team.name : "";
+    $("drop-into").textContent = (state.team ? "into " + state.team.name : "") + " — a .vcf file, or a photo of a card";
     $("drop-hint").hidden = false;
   });
   document.addEventListener("dragover", (e) => { if (hasFiles(e) && !$("app").hidden) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; } });
