@@ -1389,9 +1389,11 @@
     $("f-scan").hidden = true;
     if (prefill) {
       for (const k of FORM_FIELDS) if (prefill.fields[k] != null) form.elements[k].value = prefill.fields[k];
-      if (prefill.photo) {
-        formPhoto = prefill.photo;
-        $("f-photo").src = URL.createObjectURL(prefill.photo);
+      if (prefill.preview) {
+        // The photo is shown for checking the fields and NOT saved: the
+        // apps share a cropped, straightened card image; a raw phone photo
+        // with the table around it is not one (owner, 2026-09-21).
+        $("f-photo").src = URL.createObjectURL(prefill.preview);
         $("f-scan-title").textContent = "Read by " + prefill.engine;
         $("f-scan").hidden = false;
       }
@@ -1408,7 +1410,7 @@
     $("card-dialog").showModal();
     form.elements.firstName.focus();
   }
-  $("f-scan-drop").addEventListener("click", () => { formPhoto = null; $("f-scan").hidden = true; });
+  $("f-scan-drop").addEventListener("click", () => { $("f-scan").hidden = true; });
   $("add-card").addEventListener("click", () => openCardForm(null));
   $("f-cancel").addEventListener("click", () => $("card-dialog").close());
   $("card-form").addEventListener("submit", async (e) => {
@@ -1843,7 +1845,7 @@
     try {
       const m = await readCardWith(provider, aiKey(provider), jpeg, scanAbort.signal);
       $("scan-dialog").close();
-      openCardForm(null, { fields: formFieldsFrom(m), photo: jpeg, engine: AI[provider].label });
+      openCardForm(null, { fields: formFieldsFrom(m), preview: jpeg, engine: AI[provider].label });
       // The next photo waits until this form is closed.
       $("card-dialog").addEventListener("close", () => nextScan(), { once: true });
     } catch (err) {
