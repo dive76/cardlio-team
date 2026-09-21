@@ -50,7 +50,7 @@ prefixed. CSP allows scripts from this site and Apple's CDN only.
 - **Installable** (web manifest + a small service worker for the shell; every iCloud call stays on the network).
 - Join a team from an invite link.
 - **Add a card** by hand (a member on Windows meets people too) — a `TeamCard` record with `scannedBy` = their name; **Edit** a card for the whole team (only the changed fields are sent; claimed copies in libraries are separate).
-- **Import vCard** — drop a `.vcf` anywhere on the page (or pick one): vCard 2.1 / 3.0 / 4.0, one card or a whole address book, photos included (uploaded as the record's asset through `saveRecords`; if iCloud refuses the upload the card is saved without it). A preview lists the contacts and marks the ones the team already holds.
+- **Import vCard** — drop a `.vcf` anywhere on the page (or pick one): vCard 2.1 / 3.0 / 4.0, one card or a whole address book. ⚠️ Photos in the file are NOT uploaded in practice: CloudKit's asset host (`cws.icloud-content.com`) refuses the browser's cross-origin POST, so the card is saved without its photo (verified live 2026-09-21). A preview lists the contacts and marks the ones the team already holds.
 - **Everything (ZIP)**: the vCards with photos, the CSV and each card photo as a JPEG — a stored ZIP written in the page.
 - **Dashboard**: unclaimed and who claimed how many, who shared how many, the last seven days as bars.
 - **Keyboard**: `/` to search, arrows / Home / End across the cards, Enter opens.
