@@ -130,13 +130,24 @@
   }
 
   let toastTimer;
-  function toast(text, isError) {
+  function toast(text, isError, details) {
     const t = $("toast");
     t.textContent = text;
+    if (details) {
+      // A "Copy details" button for a failure worth reporting (the full
+      // upload URL, say) — it keeps the toast up until it is clicked.
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "toast-copy"; b.textContent = "Copy details";
+      b.addEventListener("click", async () => {
+        try { await navigator.clipboard.writeText(details); b.textContent = "Copied"; } catch (e) { b.textContent = "Could not copy"; }
+        setTimeout(() => t.classList.remove("show"), 1500);
+      });
+      t.append(" ", b);
+    }
     t.classList.toggle("error", !!isError);
     t.classList.add("show");
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => t.classList.remove("show"), isError ? 5200 : 2600);
+    toastTimer = setTimeout(() => t.classList.remove("show"), details ? 60000 : (isError ? 5200 : 2600));
   }
 
   function showAlert(text) {
@@ -1421,7 +1432,7 @@
         const by = v("scannedBy") || "Someone";
         storageSet(NAME_KEY, by);
         const made = await createCard(fields, by, formPhoto);
-        if (formPhoto && !made.photoSaved) toast("Added to " + state.team.name + " — without the photo. Upload failed: " + made.photoError, true);
+        if (formPhoto && !made.photoSaved) toast("Added to " + state.team.name + " — without the photo. Upload failed: " + made.photoError, true, "upload URL: " + lastUploadURL + "\nstatus: " + (lastUploadStatus || "none") + "\nerror: " + made.photoError + "\nUA: " + navigator.userAgent);
         else toast("Added to " + state.team.name);
       }
       $("card-dialog").close();
