@@ -1421,7 +1421,8 @@
         const by = v("scannedBy") || "Someone";
         storageSet(NAME_KEY, by);
         const made = await createCard(fields, by, formPhoto);
-        toast("Added to " + state.team.name + (formPhoto && !made.photoSaved ? " — without the photo (iCloud refused the upload)" : ""));
+        if (formPhoto && !made.photoSaved) toast("Added to " + state.team.name + " — without the photo. Upload failed: " + made.photoError, true);
+        else toast("Added to " + state.team.name);
       }
       $("card-dialog").close();
       renderTeamNav();
@@ -1450,10 +1451,22 @@
     const record = { recordType: "TeamCard", recordName: id, fields: Object.assign({}, base, fields) };
     let response;
     let photoSaved = false;
+    let photoError = "";
     if (photo) {
       const withPhoto = { recordType: "TeamCard", recordName: id, fields: Object.assign({}, record.fields, { photo: { value: photo } }) };
-      response = await team.db.saveRecords([withPhoto], { zoneID: team.zoneID });
-      photoSaved = !response.hasErrors;
+      // The asset upload is the one iCloud call that can THROW (a blocked
+      // host, a dropped connection) rather than answer with errors — the
+      // card must still land, without its photo, and say why.
+      try {
+        response = await team.db.saveRecords([withPhoto], { zoneID: team.zoneID });
+        photoSaved = !response.hasErrors;
+        if (response.hasErrors) photoError = errorText(response.errors[0]);
+      } catch (err) {
+        response = { hasErrors: true };
+        photoError = (err && (err.reason || err.message)) || String(err);
+        if (lastCSPBlock) photoError += " (the browser blocked " + lastCSPBlock + ")";
+        console.warn("[cardlio] photo upload failed", err, lastCSPBlock);
+      }
     }
     if (!photo || response.hasErrors) {
       const batch = team.db.newRecordsBatch({ zoneID: team.zoneID });
@@ -1469,8 +1482,15 @@
       local.fields.photo = { value: asset && asset.downloadURL ? asset : { downloadURL: URL.createObjectURL(photo) }, type: "ASSETID" };
     }
     team.records.push(local);
-    return { record: local, photoSaved: !!photo && photoSaved };
+    return { record: local, photoSaved: !!photo && photoSaved, photoError };
   }
+  // A Content-Security-Policy block looks like a network failure to
+  // CloudKit JS; remember the host so the message can name it.
+  let lastCSPBlock = "";
+  document.addEventListener("securitypolicyviolation", (e) => {
+    lastCSPBlock = e.blockedURI || e.violatedDirective;
+    console.warn("[cardlio] CSP blocked", e.blockedURI, e.violatedDirective);
+  });
 
   // ------------------------------------------------------------ vCard import
   //
