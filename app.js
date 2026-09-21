@@ -1464,6 +1464,7 @@
       } catch (err) {
         response = { hasErrors: true };
         photoError = (err && (err.reason || err.message)) || String(err);
+        if (uploadWhere()) photoError += " · upload: " + uploadWhere();
         if (lastCSPBlock) photoError += " (the browser blocked " + lastCSPBlock + ")";
         console.warn("[cardlio] photo upload failed", err, lastCSPBlock);
       }
@@ -1483,6 +1484,26 @@
     }
     team.records.push(local);
     return { record: local, photoSaved: !!photo && photoSaved, photoError };
+  }
+  // CloudKit JS posts the asset bytes with an XMLHttpRequest to a URL
+  // Apple hands back; a failure there is reported as a bare NETWORK_ERROR.
+  // Remember the last non-API URL opened and its final status so the
+  // message can name the host (the upload host is not documented).
+  let lastUploadURL = "", lastUploadStatus = "";
+  (function () {
+    const open = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function (method, url) {
+      const u = String(url);
+      if (!/apple-cloudkit\.com\/database\//.test(u) && /^https?:/.test(u)) {
+        lastUploadURL = u; lastUploadStatus = "";
+        this.addEventListener("loadend", () => { lastUploadStatus = this.status + (this.status === 0 ? " (blocked before a response — CORS or a policy)" : ""); });
+      }
+      return open.apply(this, arguments);
+    };
+  })();
+  function uploadWhere() {
+    if (!lastUploadURL) return "";
+    try { const u = new URL(lastUploadURL); return u.host + u.pathname.slice(0, 24) + "… → " + (lastUploadStatus || "no response"); } catch (e) { return lastUploadURL.slice(0, 60); }
   }
   // A Content-Security-Policy block looks like a network failure to
   // CloudKit JS; remember the host so the message can name it.
