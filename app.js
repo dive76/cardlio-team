@@ -1494,9 +1494,12 @@
     const open = XMLHttpRequest.prototype.open;
     XMLHttpRequest.prototype.open = function (method, url) {
       const u = String(url);
-      if (!/apple-cloudkit\.com\/database\//.test(u) && /^https?:/.test(u)) {
+      // Everything but the ordinary API calls (records/…, zones/…, users/…,
+      // and the assets/upload token request itself).
+      if (/^https?:/.test(u) && !/\/database\/1\/.*\/(records|zones|users|subscriptions|assets\/upload|assets\/rereference)\b/.test(u)) {
         lastUploadURL = u; lastUploadStatus = "";
         this.addEventListener("loadend", () => { lastUploadStatus = this.status + (this.status === 0 ? " (blocked before a response — CORS or a policy)" : ""); });
+        this.addEventListener("error", () => { console.warn("[cardlio] upload XHR error", u); });
       }
       return open.apply(this, arguments);
     };
