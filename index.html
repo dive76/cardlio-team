@@ -269,6 +269,18 @@
   </form>
 </dialog>
 
+<dialog id="delete-dialog" class="small-dialog" aria-labelledby="x-title">
+  <form method="dialog" id="delete-form">
+    <h2 id="x-title">Delete this card?</h2>
+    <p id="x-text"></p>
+    <p class="fine">It disappears from the team for everyone, in the apps too. Copies people already added to their own library stay there. This cannot be undone.</p>
+    <div class="row">
+      <button class="btn" type="button" id="x-cancel">Cancel</button>
+      <button class="btn danger" type="submit" id="x-go">Delete</button>
+    </div>
+  </form>
+</dialog>
+
 <!-- AI keys (bring your own) -->
 <dialog id="keys-dialog" class="small-dialog" aria-labelledby="k-title">
   <form method="dialog" id="keys-form" autocomplete="off">

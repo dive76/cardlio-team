@@ -30,8 +30,9 @@ this origin), then:
     `fetchRecordInfos` previews it, `acceptShares` accepts it for the
     signed-in Apple ID — which must be on the team's list (invite-only).
     This is what lets someone without an iPhone or Mac join.
-  * CLAIM — the page's only write to a team: `claimedBy` on one `TeamCard`, sent as a
+  * CLAIM — the page's first write to a team: `claimedBy` on one `TeamCard`, sent as a
     conflict-checked UPDATE (only that field; refused if the card changed).
+    Later writes (add, edit, team notes, delete) follow the same shape.
 
 Safety: the private database also holds the person's own card library, so
 the page opens only `team-…` zones. Card text is untrusted: textContent
@@ -58,6 +59,7 @@ prefixed. CSP allows scripts from this site and Apple's CDN only.
 - **Team notes** on a card (the `teamNotes` field, deployed 2026-09-20): anyone on the team edits, the first line shows on the tile and in the list, the CSV carries the column.
 - **Looks (2026-09-20)**: a card without a photo is typeset AS a card (name, title, company, accent bar) instead of initials; the team header is a hero with the cards' date range and the people who shared or claimed (as the cards name them — the web API cannot read the share's participant list); a photo opens full-size in a lightbox (click to zoom, rotate); tiles rise in, dialogs ease in, empty states carry a card illustration; a **list view** toggle (dense table: name, company, event, shared by, claimed by, note; sortable on the first four; the choice is remembered); a dark-mode contrast pass; on a phone a **bottom action bar** (Search · Add · Claim all · Export) replaces the toolbar buttons and the grid goes single-column under 480 px.
 - **Multi-select** (2026-09-20): tick a tile (top-right) or a list row — shift-click for a range — and a selection bar offers Claim (the unclaimed ones), vCard, CSV, ZIP and Print for just those; Esc clears.
+- **Delete a card** (2026-09-22): in the detail view, with a confirmation. The team's OWNER can delete any card; a member only a card they added themselves (`scannedBy` = the name they claim under). Conflict-checked like an edit; the record and its photo go for everyone, copies already claimed into libraries stay. The apps have no per-card delete yet — this is the first surface.
 - **Filters** "Mine" (claimed under your name) and "With notes"; the filter, the sort and the grid/list choice are remembered per browser.
 - **Read a card photo with your own AI key** (2026-09-21): Scan photo (or drop a photo on the page; on a phone the bottom bar's Scan offers the camera or the library) sends the photo, downscaled to 1600 px, to Claude or Gemini under the member's **own** API key — the app's exact extraction prompt and field schema, so the two clients read the same way — and pre-fills the Add card form, with the photo shown beside it for the check; the photo itself is NOT saved (the apps share a cropped, straightened card image — a raw phone photo is not one). The key lives in this browser only (session, or remembered on the device; Forget keys clears it). Building joins the street line; honorific and fax go to the notes, since a TeamCard has neither. Anthropic is called with its browser-access header; a Gemini key should be restricted to this site's referrer. CSP allows exactly those two hosts.
 - **Print sheet** (Export → Print sheet, or Print on the selection bar): a roster on paper — tick box, name and title, company and place, e-mail and mobile, shared by, claimed by, team note — of the cards shown (or selected), with the filter and time in the header.

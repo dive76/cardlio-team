@@ -900,6 +900,77 @@
       catch (e) { toast(url); }
     });
     actions.append(link);
+    if (canDelete(r)) {
+      const del = el("button", "btn quiet");
+      del.type = "button";
+      del.append(el("span", null, "Delete"));
+      del.title = state.team.owned ? "Remove this card from the team for everyone" : "Remove a card you added from the team for everyone";
+      del.addEventListener("click", () => askDelete(r));
+      actions.append(del);
+    }
+  }
+
+  // DELETE a card from the team (2026-09-22). The apps have no per-card
+  // delete (only the owner deletes a whole team), so this is the rule's
+  // first surface: the team's OWNER may delete any card; a member only a
+  // card they shared themselves (`scannedBy` = the name this browser claims
+  // with — the same self-declared name Claim uses, nothing stronger exists
+  // on the web). The record goes with its photo; claimed copies in people's
+  // libraries are separate records and stay. Conflict-checked like an edit:
+  // CloudKit refuses if the card changed since it loaded.
+  const sharedByMe = (r) => { const n = myName(); return !!n && str(r, "scannedBy").localeCompare(n, undefined, { sensitivity: "base" }) === 0; };
+  function canDelete(r) { return !!state.team && (state.team.owned || sharedByMe(r)); }
+
+  function askDelete(r) {
+    const who = [str(r, "firstName"), str(r, "lastName")].filter(Boolean).join(" ") || "This card";
+    const co = str(r, "company");
+    const claimedBy = str(r, "claimedBy");
+    $("x-text").textContent = who + (co ? " · " + co : "") + (claimedBy ? " — claimed by " + claimedBy : "") + ".";
+    $("delete-form").dataset.record = r.recordName;
+    $("delete-dialog").showModal();
+    $("x-cancel").focus();
+  }
+  $("x-cancel").addEventListener("click", () => $("delete-dialog").close());
+  $("delete-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const r = state.team && state.team.records.find((x) => x.recordName === $("delete-form").dataset.record);
+    if (!r) { $("delete-dialog").close(); return; }
+    $("x-go").disabled = true;
+    try {
+      await deleteCard(r);
+      toast("Deleted — the card is gone from the team");
+    } catch (err) {
+      toast(err.message || errorText(err), true);
+    } finally {
+      $("x-go").disabled = false;
+      $("delete-dialog").close();
+    }
+  });
+
+  async function deleteCard(r) {
+    const team = state.team;
+    const batch = team.db.newRecordsBatch({ zoneID: team.zoneID });
+    batch.delete([{ recordType: r.recordType, recordName: r.recordName, recordChangeTag: r.recordChangeTag }]);
+    const response = await batch.commit();
+    if (response.hasErrors) {
+      const err = response.errors[0];
+      const code = err.ckErrorCode || err.serverErrorCode || "";
+      if (/CONFLICT|ATOMIC/.test(code)) {
+        await refreshTeam(team);
+        throw new Error("Someone changed this card a moment ago. It has been reloaded; open it again to delete.");
+      }
+      if (/NOT_FOUND|UNKNOWN_ITEM/.test(code)) {
+        // Already gone (deleted from an app meanwhile): treat as done.
+      } else {
+        throw new Error("Could not delete: " + errorText(err));
+      }
+    }
+    team.records = team.records.filter((x) => x.recordName !== r.recordName);
+    if (team.pendingRecords) team.pendingRecords = team.pendingRecords.filter((x) => x.recordName !== r.recordName);
+    state.selected.delete(r.recordName);
+    if (state.open === r) { state.open = null; $("detail").close(); }
+    renderTeamNav();
+    renderTeam();
   }
 
   // Undo a claim you made — back to unclaimed for the whole team. Only
@@ -1066,7 +1137,7 @@
   }
   async function pollTeam(force) {
     const team = state.team;
-    if (!team || polling || (!force && document.visibilityState !== "visible") || $("claim-dialog").open) return;
+    if (!team || polling || (!force && document.visibilityState !== "visible") || $("claim-dialog").open || $("delete-dialog").open) return;
     polling = true;
     try {
       const fresh = (await zoneRecords(team.db, team.zoneID)).filter((x) => x.recordType === "TeamCard");

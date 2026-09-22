@@ -249,6 +249,8 @@ body.signed-out .brand-name span { color: #9ea3b5; }
 .btn svg { width: 17px; height: 17px; }
 .btn.primary { background: var(--grad); border-color: transparent; color: #fff; box-shadow: 0 6px 18px rgba(79, 70, 229, 0.32); }
 .btn.primary:hover { filter: brightness(1.06); }
+.btn.danger { background: var(--danger); border-color: transparent; color: #fff; }
+.btn.danger:hover { filter: brightness(1.06); border-color: transparent; }
 .btn[disabled] { opacity: 0.55; cursor: default; }
 .menu-wrap { position: relative; }
 .menu {
