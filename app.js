@@ -27,6 +27,7 @@
     teams: [],          // { id, zoneID, db, owned, name, records: [...] }
     team: null,
     filter: storageGet("cardlio.team.filter") || "all",
+    rating: storageGet("cardlio.team.rating") || "",      // "", hot, warm, cold
     sort: storageGet("cardlio.team.sort") || "new",
     selected: new Set(),   // recordNames ticked for a bulk action (12)
     query: "",
@@ -40,6 +41,26 @@
   const myName = () => storageGet(NAME_KEY);
   const isMine = (r) => { const n = myName(); return !!n && str(r, "claimedBy").localeCompare(n, undefined, { sensitivity: "base" }) === 0; };
 
+  // The lead rating and interest tags the 3.2 apps put on a team card
+  // (2026-10-02): `leadRating` is "hot" | "warm" | "cold" | "", anything
+  // else reads as not rated; `leadInterests` is the labels, one per line.
+  // On the web they are the TEAM's rating — one value, last writer wins,
+  // like team notes; a claimed copy in someone's own library keeps its own.
+  const RATINGS = { hot: { label: "Hot", rank: 3 }, warm: { label: "Warm", rank: 2 }, cold: { label: "Cold", rank: 1 } };
+  function rating(r) { const v = str(r, "leadRating").trim().toLowerCase(); return RATINGS[v] ? v : ""; }
+  function interestList(text) {
+    const seen = new Set();
+    return String(text || "").split(/\r?\n/).map((s) => s.trim()).filter((s) => s && !seen.has(s.toLowerCase()) && seen.add(s.toLowerCase()));
+  }
+  function interests(r) { return interestList(str(r, "leadInterests")); }
+  function ratingMark(v, withLabel) {
+    const s = el("span", "rating " + v);
+    s.append(icon(v));
+    if (withLabel) s.append(el("span", null, RATINGS[v].label));
+    s.title = RATINGS[v].label + " lead";
+    return s;
+  }
+
   // ---------------------------------------------------------------- utils
 
   function el(tag, cls, text) {
@@ -50,6 +71,9 @@
   }
 
   const ICONS = {
+    hot: '<path d="M12 3c1 3.2 4.2 4.6 4.2 8.6a4.2 4.2 0 0 1-8.4 0c0-1.5.6-2.7 1.5-3.6C10 9.6 12 7 12 3z"/>',
+    warm: '<circle cx="12" cy="12" r="3.6"/><path d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2M6 6l1.4 1.4M16.6 16.6L18 18M6 18l1.4-1.4M16.6 7.4L18 6"/>',
+    cold: '<path d="M12 3v18M4.2 7.5l15.6 9M19.8 7.5l-15.6 9"/><path d="M9.6 4.6L12 7l2.4-2.4M9.6 19.4L12 17l2.4 2.4"/>',
     note: '<path d="M6 4h9l4 4v12H6z"/><path d="M15 4v4h4"/><path d="M9 12h6M9 16h6"/>',
     mail: '<path d="M4 6.5h16v11H4z"/><path d="M4.5 7l7.5 6 7.5-6"/>',
     phone: '<path d="M6.5 4h3l1.5 4-2 1.3a10 10 0 0 0 5.7 5.7L16 13l4 1.5v3a2 2 0 0 1-2.2 2A15.5 15.5 0 0 1 4.5 6.2 2 2 0 0 1 6.5 4z"/>',
@@ -497,11 +521,13 @@
       if (state.filter === "taken" && !taken) return false;
       if (state.filter === "mine" && !isMine(r)) return false;
       if (state.filter === "notes" && !str(r, "teamNotes").trim()) return false;
+      if (state.rating && rating(r) !== state.rating) return false;
       if (state.event && str(r, "eventTag") !== state.event) return false;
       if (!q) return true;
       const hay = fold([fullName(r), str(r, "title"), str(r, "company"), emails(r).join(" "),
         str(r, "phone"), str(r, "mobile"), str(r, "website"), str(r, "city"), str(r, "country"),
-        str(r, "eventTag"), str(r, "scannedBy"), str(r, "claimedBy"), str(r, "notes"), str(r, "teamNotes")].join(" "));
+        str(r, "eventTag"), str(r, "scannedBy"), str(r, "claimedBy"), str(r, "notes"), str(r, "teamNotes"),
+        rating(r) ? RATINGS[rating(r)].label : "", interests(r).join(" ")].join(" "));
       return q.split(/\s+/).every((w) => hay.includes(w));
     });
     const byText = (get) => (a, b) => get(a).localeCompare(get(b), undefined, { sensitivity: "base" });
@@ -509,6 +535,7 @@
     else if (state.sort === "company") list.sort(byText((r) => str(r, "company") || "~"));
     else if (state.sort === "event") list.sort(byText((r) => str(r, "eventTag") || "~"));
     else if (state.sort === "by") list.sort(byText((r) => str(r, "scannedBy") || "~"));
+    else if (state.sort === "rating") list.sort((a, b) => ((RATINGS[rating(b)] || {}).rank || 0) - ((RATINGS[rating(a)] || {}).rank || 0) || scannedAt(b) - scannedAt(a));
     else list.sort((a, b) => scannedAt(b) - scannedAt(a));
     return list;
   }
@@ -545,7 +572,7 @@
 
   // 5. The list view: a dense, sortable table for a big team.
   const LIST_COLUMNS = [
-    ["name", "Name"], ["company", "Company"], ["event", "Event"], ["by", "Shared by"], ["claimed", "Claimed by"], ["note", "Team note"]
+    ["name", "Name"], ["company", "Company"], ["rating", "Rating"], ["event", "Event"], ["by", "Shared by"], ["claimed", "Claimed by"], ["note", "Team note"]
   ];
   function renderList(list) {
     const head = $("list").querySelector("thead"), body = $("list").querySelector("tbody");
@@ -559,7 +586,7 @@
     allTh.append(allBox); tr.append(allTh);
     for (const [key, label] of LIST_COLUMNS) {
       const th = el("th");
-      const sortKey = { name: "name", company: "company", event: "event", by: "by" }[key];
+      const sortKey = { name: "name", company: "company", rating: "rating", event: "event", by: "by" }[key];
       if (sortKey) {
         const b = el("button", null, label + (state.sort === sortKey ? " ↓" : ""));
         b.type = "button";
@@ -588,7 +615,10 @@
       txt.append(el("b", null, displayName(r)));
       if (str(r, "title")) txt.append(el("small", null, str(r, "title")));
       w.append(txt); who.append(w); row.append(who);
-      row.append(el("td", null, str(r, "company")), el("td", null, str(r, "eventTag")), el("td", null, str(r, "scannedBy")));
+      const rc = el("td", "rating-cell");
+      if (rating(r)) rc.append(ratingMark(rating(r), true));
+      if (interests(r).length) rc.append(el("small", null, interests(r).join(", ")));
+      row.append(el("td", null, str(r, "company")), rc, el("td", null, str(r, "eventTag")), el("td", null, str(r, "scannedBy")));
       const cl = el("td");
       const claimedBy = str(r, "claimedBy");
       cl.append(el("span", claimedBy ? "status taken" : "status open", claimedBy || "Unclaimed"));
@@ -639,7 +669,12 @@
       face();
     }
     const tb = el("div", "tb");
-    tb.append(el("div", "nm", displayName(r)));
+    // The rating sits beside the name, in the text area: on the photo it
+    // covered the name of a typeset (photo-less) card.
+    const nmRow = el("div", "nm-row");
+    nmRow.append(el("div", "nm", displayName(r)));
+    if (rating(r)) nmRow.append(ratingMark(rating(r), true));
+    tb.append(nmRow);
     const role = [str(r, "title"), fullName(r) ? str(r, "company") : ""].filter(Boolean).join(" · ");
     if (role) tb.append(el("div", "co", role));
     const place = [str(r, "city"), str(r, "country")].filter(Boolean).join(", ");
@@ -654,9 +689,10 @@
     foot.append(el("span", claimedBy ? "status taken" : "status open", claimedBy ? "Claimed" : "Unclaimed"));
     tb.append(foot);
     b.append(ph, tb);
-    b.setAttribute("aria-label", displayName(r) + (role ? ", " + role : "") + (claimedBy ? ", claimed by " + claimedBy : ", unclaimed"));
+    b.setAttribute("aria-label", displayName(r) + (role ? ", " + role : "") + (rating(r) ? ", " + RATINGS[rating(r)].label + " lead" : "") + (claimedBy ? ", claimed by " + claimedBy : ", unclaimed"));
     b.addEventListener("click", () => openDetail(r));
     li.append(b);
+
     // 12. The tick for a bulk action — a sibling of the tile button.
     const pick = el("button", "pick");
     pick.type = "button";
@@ -734,13 +770,14 @@
     sheet.append(el("p", "meta", bits.join(" · ")));
     const table = el("table"), thead = el("thead"), tbody = el("tbody");
     const hr = el("tr");
-    for (const h of ["", "Name", "Company", "Contact", "Shared by", "Claimed by", "Team note"]) hr.append(el("th", h ? null : "tick", h));
+    for (const h of ["", "Name", "Company", "Rating", "Contact", "Shared by", "Claimed by", "Team note"]) hr.append(el("th", h ? null : "tick", h));
     thead.append(hr);
     for (const r of scope.records) {
       const tr = el("tr");
       const tick = el("td", "tick"); tick.append(el("i")); tr.append(tick);
       const nm = el("td"); nm.append(el("b", null, displayName(r))); if (str(r, "title")) nm.append(el("small", null, str(r, "title"))); tr.append(nm);
       const co = el("td"); co.append(el("span", null, str(r, "company"))); const place = [str(r, "city"), str(r, "country")].filter(Boolean).join(", "); if (place) co.append(el("small", null, place)); tr.append(co);
+      const rt = el("td"); if (rating(r)) rt.append(el("b", null, RATINGS[rating(r)].label)); if (interests(r).length) rt.append(el("small", null, interests(r).join(", "))); tr.append(rt);
       const ct = el("td"); for (const line of [emails(r)[0], str(r, "mobile") || str(r, "phone")].filter(Boolean)) ct.append(el("div", null, line)); tr.append(ct);
       tr.append(el("td", null, [str(r, "scannedBy"), when(scannedAt(r))].filter(Boolean).join("\n")));
       tr.append(el("td", str(r, "claimedBy") ? "claimed" : null, str(r, "claimedBy") || "—"));
@@ -820,6 +857,8 @@
     const notes = str(r, "notes");
     $("d-notes").hidden = !notes;
     $("d-notes").textContent = notes;
+    renderLead(r);
+    $("d-interest-add").value = "";
     $("d-team-notes").value = str(r, "teamNotes");
     $("d-team-notes-save").disabled = true;
 
@@ -986,6 +1025,53 @@
       toast(err.message || errorText(err), true);
     }
   }
+
+  // The team's rating of the lead and its interest tags: each tap saves at
+  // once, one field, conflict-checked like every other edit.
+  function renderLead(r) {
+    const box = $("d-rating");
+    box.replaceChildren();
+    for (const v of ["hot", "warm", "cold"]) {
+      const b = el("button", "rate " + v);
+      b.type = "button";
+      b.append(icon(v), el("span", null, RATINGS[v].label));
+      b.setAttribute("aria-pressed", String(rating(r) === v));
+      b.addEventListener("click", () => saveLead(r, { leadRating: { value: rating(r) === v ? "" : v, type: "STRING" } }));
+      box.append(b);
+    }
+    const tags = $("d-interests");
+    tags.replaceChildren();
+    for (const t of interests(r)) {
+      const c = el("span", "tag", t);
+      const x = el("button", null, "\u00d7");
+      x.type = "button";
+      x.setAttribute("aria-label", "Remove " + t);
+      x.addEventListener("click", () => saveLead(r, { leadInterests: { value: interests(r).filter((i) => i !== t).join("\n"), type: "STRING" } }));
+      c.append(x);
+      tags.append(c);
+    }
+    // Offer the labels the team already uses, so "pricing" is not also "Pricing ".
+    const mine = new Set(interests(r).map((i) => i.toLowerCase()));
+    const known = interestList(state.team.records.flatMap(interests).join("\n")).filter((i) => !mine.has(i.toLowerCase()));
+    const dl = $("interest-list");
+    dl.replaceChildren();
+    for (const k of known) { const o = document.createElement("option"); o.value = k; dl.append(o); }
+  }
+  async function saveLead(r, fields) {
+    try {
+      await updateCard(r, fields);
+      if (state.open === r) renderLead(r);
+      renderGrid();
+    } catch (err) { toast(err.message || errorText(err), true); }
+  }
+  $("d-interest-add").addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const r = state.open, t = e.target.value.trim();
+    if (!r || !t) return;
+    e.target.value = "";
+    saveLead(r, { leadInterests: { value: interestList(interests(r).concat(t).join("\n")).join("\n"), type: "STRING" } });
+  });
 
   // The team's shared note on the lead (2026-09-20): one field, last
   // writer wins, the same conflict-checked update as an edit.
@@ -1397,10 +1483,11 @@
   }
   function csvText(records) {
     const head = ["First name", "Last name", "Title", "Company", "Emails", "Phone", "Mobile", "Website",
-      "Street", "Unit", "Postal code", "City", "Country", "Event", "Notes", "Team notes", "Shared by", "Shared on", "Claimed by"];
+      "Street", "Unit", "Postal code", "City", "Country", "Event", "Rating", "Interests", "Notes", "Team notes", "Shared by", "Shared on", "Claimed by"];
     const rows = records.map((r) => [str(r, "firstName"), str(r, "lastName"), str(r, "title"), str(r, "company"),
       emails(r).join("; "), str(r, "phone"), str(r, "mobile"), str(r, "website"), str(r, "street"), str(r, "unit"),
-      str(r, "postalCode"), str(r, "city"), str(r, "country"), str(r, "eventTag"), str(r, "notes"), str(r, "teamNotes"), str(r, "scannedBy"),
+      str(r, "postalCode"), str(r, "city"), str(r, "country"), str(r, "eventTag"),
+      rating(r) ? RATINGS[rating(r)].label : "", interests(r).join("; "), str(r, "notes"), str(r, "teamNotes"), str(r, "scannedBy"),
       scannedAt(r) ? new Date(scannedAt(r)).toISOString().slice(0, 10) : "", str(r, "claimedBy")]);
     return "\ufeff" + [head, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n") + "\r\n";
   }
@@ -1448,7 +1535,7 @@
   // (the record only; a colleague's claimed copy in their own library is
   // separate). Both are conflict-checked like a claim.
   const FORM_FIELDS = ["firstName", "lastName", "title", "company", "emails", "phone", "mobile", "website",
-    "street", "unit", "postalCode", "city", "country", "eventTag", "notes"];
+    "street", "unit", "postalCode", "city", "country", "eventTag", "notes", "leadRating", "leadInterests"];
   let editing = null;
   let formPhoto = null;   // a Blob read from a card photo, saved with the new card
   function openCardForm(r, prefill) {
@@ -1475,7 +1562,9 @@
       : "Someone you met without a card to scan. The team sees it like any shared card.";
     $("f-go").textContent = r ? "Save" : "Add to team";
     $("f-by-label").hidden = !!r;
-    if (r) for (const k of FORM_FIELDS) form.elements[k].value = k === "emails" ? emails(r).join(", ") : str(r, k);
+    if (r) for (const k of FORM_FIELDS) {
+      form.elements[k].value = k === "emails" ? emails(r).join(", ") : k === "leadRating" ? rating(r) : k === "leadInterests" ? interests(r).join(", ") : str(r, k);
+    }
     else form.elements.scannedBy.value = myName();
     if (prefill && !form.elements.eventTag.value && state.event) form.elements.eventTag.value = state.event;
     $("card-dialog").showModal();
@@ -1491,8 +1580,11 @@
     const fields = {};
     for (const k of FORM_FIELDS) {
       if (k === "emails") fields.emails = { value: v("emails").split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean), type: "STRING_LIST" };
+      else if (k === "leadInterests") fields[k] = { value: interestList(v(k).split(/[,;\n]/).join("\n")).join("\n"), type: "STRING" };
       else fields[k] = { value: v(k), type: "STRING" };
     }
+    // Like the apps: a new card carries the lead fields only when they are set.
+    if (!editing) for (const k of ["leadRating", "leadInterests"]) if (!fields[k].value) delete fields[k];
     if (!fields.firstName.value && !fields.lastName.value && !fields.company.value) {
       $("f-error").textContent = "A name or a company, at least."; $("f-error").hidden = false; return;
     }
@@ -2060,6 +2152,16 @@
     b.setAttribute("aria-pressed", String(b.dataset.filter === state.filter));
   }
   if (![...document.querySelectorAll("#filter-group button")].some((b) => b.dataset.filter === state.filter)) state.filter = "all";
+  if (!RATINGS[state.rating]) state.rating = "";
+  for (const b of document.querySelectorAll("#rating-group button")) {
+    b.addEventListener("click", () => {
+      state.rating = b.dataset.rating;
+      storageSet("cardlio.team.rating", state.rating);
+      for (const x of document.querySelectorAll("#rating-group button")) x.setAttribute("aria-pressed", String(x === b));
+      renderGrid();
+    });
+    b.setAttribute("aria-pressed", String(b.dataset.rating === state.rating));
+  }
   $("sort").addEventListener("change", (e) => { state.sort = e.target.value; storageSet("cardlio.team.sort", state.sort); renderGrid(); });
   if ([...$("sort").options].some((o) => o.value === state.sort)) $("sort").value = state.sort; else state.sort = "new";
   $("team-select").addEventListener("change", (e) => {
@@ -2113,7 +2215,8 @@
     navigator.serviceWorker.register("sw.js").catch(() => {});
   }
 
-  if (cfg.testHooks) window.__cardlioTeamPoll = () => pollTeam(true);   // the fake-CloudKit harness only (its tab may be hidden)
+  if (cfg.testHooks) window.__cardlioTeamPoll = () => pollTeam(true);
+  if (cfg.testHooks) window.__cardlioCsv = () => csvText(visibleRecords());   // the fake-CloudKit harness only (its tab may be hidden)
 
   container.setUpAuth()
     .then((user) => (user ? signedIn() : signedOut()))

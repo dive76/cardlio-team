@@ -14,7 +14,7 @@
 <meta name="theme-color" content="#4F46E5">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="assets/icon-192.png">
-<link rel="stylesheet" href="app.css?v=10">
+<link rel="stylesheet" href="app.css?v=11">
 </head>
 <body>
 
@@ -116,6 +116,12 @@
           <button type="button" data-filter="mine" aria-pressed="false" title="Cards claimed under your name">Mine</button>
           <button type="button" data-filter="notes" aria-pressed="false" title="Cards that carry a team note">With notes</button>
         </div>
+        <div class="segmented" id="rating-group" role="group" aria-label="Lead rating">
+          <button type="button" data-rating="" aria-pressed="true">Any rating</button>
+          <button type="button" data-rating="hot" aria-pressed="false">Hot</button>
+          <button type="button" data-rating="warm" aria-pressed="false">Warm</button>
+          <button type="button" data-rating="cold" aria-pressed="false">Cold</button>
+        </div>
         <div class="segmented view-toggle" role="group" aria-label="View">
           <button type="button" data-view="grid" aria-pressed="true" title="Cards">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg>
@@ -133,6 +139,7 @@
             <option value="company">Company</option>
             <option value="event">Event</option>
             <option value="by">Shared by</option>
+            <option value="rating">Rating (hot first)</option>
           </select>
         </label>
         <button class="btn" id="add-card" type="button" title="Add a card by hand — someone you met, typed in">
@@ -241,6 +248,13 @@
       </div>
       <div class="fields" id="d-fields"></div>
       <div class="notes" id="d-notes" hidden></div>
+      <div class="lead-box">
+        <div class="lead-label">Lead <span>the team's rating — set here or in the cardlio app</span></div>
+        <div class="lead-rate" id="d-rating" role="group" aria-label="Lead rating"></div>
+        <div class="lead-tags" id="d-interests"></div>
+        <input id="d-interest-add" list="interest-list" maxlength="40" placeholder="Add an interest and press Enter" autocomplete="off" aria-label="Add an interest">
+        <datalist id="interest-list"></datalist>
+      </div>
       <div class="team-notes">
         <label for="d-team-notes">Team notes <span>shared with everyone on the team — who called, what was promised</span></label>
         <textarea id="d-team-notes" rows="3" maxlength="4000" placeholder="e.g. 20 Sep · called, send the brochure"></textarea>
@@ -361,6 +375,8 @@
       <label>City<input name="city" maxlength="80"></label>
       <label>Country<input name="country" maxlength="60"></label>
       <label class="wide">Event<input name="eventTag" maxlength="80" placeholder="e.g. Expo Singapore"></label>
+      <label>Lead rating<select name="leadRating"><option value="">Not rated</option><option value="hot">Hot</option><option value="warm">Warm</option><option value="cold">Cold</option></select></label>
+      <label>Interests<input name="leadInterests" maxlength="300" placeholder="separated by commas"></label>
       <label class="wide">Notes<textarea name="notes" rows="3" maxlength="2000"></textarea></label>
       <label class="wide" id="f-by-label">Your name, as the team sees it<input name="scannedBy" id="f-by" maxlength="60" autocomplete="name"></label>
     </div>
@@ -393,6 +409,6 @@
 
 <script src="config.js?v=1"></script>
 <script src="https://cdn.apple-cloudkit.com/ck/2/cloudkit.js"></script>
-<script src="app.js?v=14"></script>
+<script src="app.js?v=15"></script>
 </body>
 </html>
