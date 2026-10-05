@@ -430,6 +430,7 @@
     document.body.classList.add("signed-out");
     document.body.classList.remove("signed-in-view");
     $("mobile-bar").hidden = true;
+    $("account").hidden = true;
     $("welcome").hidden = false;
     $("invite-banner").hidden = !sessionGet(PENDING_KEY);
     $("app").hidden = true;
@@ -448,6 +449,7 @@
     $("app").hidden = false;
     $("refresh").hidden = false;
     $("mobile-bar").hidden = false;
+    $("account").hidden = false;
     container.whenUserSignsOut().then(signedOut);
     load();
   }
@@ -592,6 +594,69 @@
     if (r) openDetail(r);
   }
 
+  // The line under the title: plain facts, the actionable ones as links.
+  function summaryLink(text, act) {
+    const b = el("button", "linkish", text);
+    b.type = "button";
+    b.addEventListener("click", act);
+    return b;
+  }
+  function renderSummary(parts) {
+    const sub = $("team-sub");
+    sub.replaceChildren();
+    parts.forEach((p, i) => { if (i) sub.append(" · "); sub.append(p); });
+  }
+
+  // Filters live in the Filters panel; these keep its buttons, the chips
+  // under the toolbar and the count on the button in step.
+  function pressIn(groupId, attr, value) {
+    for (const x of document.querySelectorAll("#" + groupId + " button")) x.setAttribute("aria-pressed", String(x.dataset[attr] === value));
+  }
+  function setFilter(v) { state.filter = v; storageSet("cardlio.team.filter", v); pressIn("filter-group", "filter", v); renderGrid(); }
+  function setMFilter(v) { state.mfilter = v; storageSet("cardlio.mine.filter", v); pressIn("mine-filter-group", "mfilter", v); renderGrid(); }
+  function setRating(v) { state.rating = v; storageSet("cardlio.team.rating", v); pressIn("rating-group", "rating", v); renderGrid(); }
+  function activeFilters() {
+    const out = [];
+    const label = (groupId, attr, value) => {
+      const b = [...document.querySelectorAll("#" + groupId + " button")].find((x) => x.dataset[attr] === value);
+      return b ? b.textContent.trim() : value;
+    };
+    if (!state.team) return out;
+    if (state.team.personal) {
+      if (state.mfilter !== "all") out.push({ text: label("mine-filter-group", "mfilter", state.mfilter), clear: () => setMFilter("all") });
+      if (state.country) out.push({ text: state.country, clear: () => { state.country = ""; $("country-filter").value = ""; renderGrid(); } });
+      if (state.industry) out.push({ text: state.industry, clear: () => { state.industry = ""; $("industry-filter").value = ""; renderGrid(); } });
+    } else if (state.filter !== "all") {
+      out.push({ text: label("filter-group", "filter", state.filter), clear: () => setFilter("all") });
+    }
+    if (state.rating) out.push({ text: RATINGS[state.rating].label + " leads", clear: () => setRating("") });
+    return out;
+  }
+  function renderActiveFilters() {
+    const active = activeFilters();
+    $("filters-count").textContent = String(active.length);
+    $("filters-count").hidden = !active.length;
+    const box = $("active-filters");
+    box.replaceChildren();
+    box.hidden = !active.length;
+    if (!active.length) return;
+    box.append(el("span", "lead-in", "Showing"));
+    for (const a of active) {
+      const c = el("button", "filter-chip");
+      c.type = "button";
+      c.setAttribute("aria-label", "Remove filter: " + a.text);
+      c.append(el("span", null, a.text), el("span", "x", "\u00d7"));
+      c.addEventListener("click", a.clear);
+      box.append(c);
+    }
+    if (active.length > 1) {
+      const all = el("button", "linkish", "Clear all");
+      all.type = "button";
+      all.addEventListener("click", () => { for (const a of activeFilters()) a.clear(); });
+      box.append(all);
+    }
+  }
+
   function renderTeam() {
     const team = state.team;
     const records = team.records;
@@ -605,7 +670,10 @@
       sub.push(a === b ? "Cards from " + a : "Cards from " + a + " to " + b);
     } else if (team.createdAt) sub.push("Started " + when(team.createdAt));
     if (!team.named) sub.push("Open the team library in the cardlio app once to show this team's name here");
-    $("team-sub").textContent = sub.join(" · ");
+    const open = records.filter((r) => !str(r, "claimedBy")).length;
+    const line = [plural(records.length, "card")];
+    if (records.length) line.push(open ? summaryLink(open + " unclaimed", () => setFilter("open")) : "all claimed");
+    renderSummary(line.concat(sub));
     // The people on the team, as the cards show them (the web API cannot
     // read the zone-wide share's participant list — the apps can).
     const peopleEl = $("team-people");
@@ -687,9 +755,14 @@
     const records = lib.records;
     $("team-name").textContent = lib.name + " ";
     $("team-name").append(el("span", "badge plain", "Only you"));
-    const sub = ["Your cardlio library, from your iCloud", "rate, tag, add notes and mark follow-ups here; edit everything else in the app"];
-    if (!lib.unlocked) sub.push("downloads come with the unlock");
-    $("team-sub").textContent = sub.join(" · ");
+    const owed = records.filter(LIB.followUpOwed).length;
+    const due = records.filter((r) => LIB.reconnectDue(r)).length;
+    const line = [plural(records.length, "card")];
+    if (owed) line.push(summaryLink(plural(owed, "follow-up") + " owed", () => setMFilter("owed")));
+    if (due) line.push(summaryLink(due + (due === 1 ? " person" : " people") + " to reconnect with", () => setMFilter("reconnect")));
+    line.push("from your iCloud");
+    if (!lib.unlocked) line.push(summaryLink("downloads come with the unlock", () => mayDownload()));
+    renderSummary(line);
     state.dupes = null;
     const stats = $("stats");
     stats.replaceChildren();
@@ -774,7 +847,24 @@
     const alive = new Set(state.team.records.map((r) => r.recordName));
     for (const id of state.selected) if (!alive.has(id)) state.selected.delete(id);
     if (asList) renderList(list);
-    else list.forEach((r, i) => { const li = tile(r); li.style.setProperty("--i", Math.min(i, 24)); grid.append(li); });
+    else {
+      // Newest first reads as time: Last 7 days / Last 30 days / Earlier,
+      // headed only when the cards shown span more than one of them.
+      const day = 86400000, now = Date.now();
+      const bucket = (r) => { const age = now - scannedAt(r); return age < 7 * day ? "Last 7 days" : age < 30 * day ? "Last 30 days" : "Earlier"; };
+      const grouped = state.sort === "new" && new Set(list.map(bucket)).size > 1;
+      let last = "";
+      list.forEach((r, i) => {
+        if (grouped && bucket(r) !== last) {
+          last = bucket(r);
+          const head = el("li", "group-head");
+          head.append(el("h2", null, last), el("span", null, plural(list.filter((x) => bucket(x) === last).length, "card")));
+          grid.append(head);
+        }
+        const li = tile(r); li.style.setProperty("--i", Math.min(i, 24)); grid.append(li);
+      });
+    }
+    renderActiveFilters();
     $("sel-hint").hidden = !(list.length > 1 && !state.selected.size);
     $("sel-hint").textContent = personal ? "Tick cards to download or export just those. Shift-click ticks a range."
       : "Tick cards to claim, download or export just those. Shift-click ticks a range.";
@@ -883,12 +973,13 @@
       // accent bar) rather than a block of initials.
       ph.classList.add("cardface");
       ph.replaceChildren();
-      const top = el("div"), bottom = el("div");
+      const card = el("div", "face-card"), top = el("div"), bottom = el("div");
       top.append(el("div", "n", displayName(r)));
       if (str(r, "title")) top.append(el("div", "t", str(r, "title")));
       if (fullName(r) && str(r, "company")) bottom.append(el("div", "c", str(r, "company")));
       bottom.append(el("div", "bar"));
-      ph.append(top, bottom);
+      card.append(top, bottom);
+      ph.append(card);
     };
     if (url) {
       const img = el("img");
@@ -1089,7 +1180,14 @@
       img.addEventListener("click", () => openLightbox(url, img.alt));
       photo.append(img);
     } else {
-      photo.append(el("span", "noimg", "No photo"));
+      // No photo: the card typeset as a card, as in the gallery.
+      const card = el("div", "face-card big"), top = el("div"), bottom = el("div");
+      top.append(el("div", "n", displayName(r)));
+      if (str(r, "title")) top.append(el("div", "t", str(r, "title")));
+      if (fullName(r) && str(r, "company")) bottom.append(el("div", "c", str(r, "company")));
+      bottom.append(el("div", "bar"));
+      card.append(top, bottom);
+      photo.append(card);
     }
     $("d-name").textContent = displayName(r);
     $("d-role").textContent = [str(r, "title"), fullName(r) ? str(r, "company") : ""].filter(Boolean).join(" · ");
@@ -1148,6 +1246,11 @@
 
     renderDetailActions(r);
     setHash({ team: state.team.id, card: r.recordName });
+    // Step through the cards shown (the current search and filters), as
+    // when leafing through a fair's stack.
+    const order = visibleRecords(), at = order.indexOf(r);
+    $("d-nav").hidden = at < 0 || order.length < 2;
+    $("d-pos").textContent = at >= 0 ? (at + 1) + " of " + order.length : "";
     const dlg = $("detail");
     if (!dlg.open) dlg.showModal();
     $("d-close").focus();
@@ -1270,6 +1373,21 @@
     const before = str(r, "notes");
     const added = when(Date.now()) + " · " + line;
     saveMine(r, { notes: before ? before + "\n" + added : added }, "Note added");
+  });
+
+  function stepDetail(delta) {
+    const r = state.open;
+    if (!r || !state.team) return;
+    const order = visibleRecords(), at = order.indexOf(r);
+    if (at < 0 || order.length < 2) return;
+    openDetail(order[(at + delta + order.length) % order.length]);
+  }
+  $("d-prev").addEventListener("click", () => stepDetail(-1));
+  $("d-next").addEventListener("click", () => stepDetail(1));
+  $("detail").addEventListener("keydown", (e) => {
+    if ((e.key !== "ArrowLeft" && e.key !== "ArrowRight") || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+    e.preventDefault();
+    stepDetail(e.key === "ArrowLeft" ? -1 : 1);
   });
 
   function renderDetailActions(r) {
@@ -2602,35 +2720,20 @@
 
   $("search").addEventListener("input", (e) => { state.query = e.target.value; renderGrid(); });
   for (const b of document.querySelectorAll("#filter-group button")) {
-    b.addEventListener("click", () => {
-      state.filter = b.dataset.filter;
-      storageSet("cardlio.team.filter", state.filter);
-      for (const x of document.querySelectorAll("#filter-group button")) x.setAttribute("aria-pressed", String(x === b));
-      renderGrid();
-    });
+    b.addEventListener("click", () => setFilter(b.dataset.filter));
     b.setAttribute("aria-pressed", String(b.dataset.filter === state.filter));
   }
   if (![...document.querySelectorAll("#filter-group button")].some((b) => b.dataset.filter === state.filter)) state.filter = "all";
   if (!["all", "owed", "reconnect", "notes"].includes(state.mfilter)) state.mfilter = "all";
   for (const b of document.querySelectorAll("#mine-filter-group button")) {
-    b.addEventListener("click", () => {
-      state.mfilter = b.dataset.mfilter;
-      storageSet("cardlio.mine.filter", state.mfilter);
-      for (const x of document.querySelectorAll("#mine-filter-group button")) x.setAttribute("aria-pressed", String(x === b));
-      renderGrid();
-    });
+    b.addEventListener("click", () => setMFilter(b.dataset.mfilter));
     b.setAttribute("aria-pressed", String(b.dataset.mfilter === state.mfilter));
   }
   $("country-filter").addEventListener("change", (e) => { state.country = e.target.value; renderGrid(); });
   $("industry-filter").addEventListener("change", (e) => { state.industry = e.target.value; renderGrid(); });
   if (!RATINGS[state.rating]) state.rating = "";
   for (const b of document.querySelectorAll("#rating-group button")) {
-    b.addEventListener("click", () => {
-      state.rating = b.dataset.rating;
-      storageSet("cardlio.team.rating", state.rating);
-      for (const x of document.querySelectorAll("#rating-group button")) x.setAttribute("aria-pressed", String(x === b));
-      renderGrid();
-    });
+    b.addEventListener("click", () => setRating(b.dataset.rating));
     b.setAttribute("aria-pressed", String(b.dataset.rating === state.rating));
   }
   $("sort").addEventListener("change", (e) => { state.sort = e.target.value; storageSet("cardlio.team.sort", state.sort); renderGrid(); });
@@ -2646,13 +2749,36 @@
   $("mb-claim").addEventListener("click", () => $("claim-all").click());
   $("mb-export").addEventListener("click", () => { if (!mayDownload()) return; $("export-btn").scrollIntoView({ block: "center" }); setMenu(true); });
 
+  // The other popovers: Add (teams), Filters, Account. One open at a time;
+  // a click outside or Esc closes it.
+  const pops = [["add-btn", "add-menu"], ["filters-btn", "filters-pop"], ["account-btn", "account-pop"]];
+  function closePops(except) {
+    for (const [b, m] of pops) {
+      if (m === except) continue;
+      if (m === "account-pop") $(m).classList.remove("open"); else $(m).hidden = true;
+      $(b).setAttribute("aria-expanded", "false");
+    }
+  }
+  for (const [b, m] of pops) {
+    $(b).addEventListener("click", () => {
+      const isOpen = m === "account-pop" ? $(m).classList.contains("open") : !$(m).hidden;
+      closePops(m);
+      setMenu(false);
+      if (m === "account-pop") $(m).classList.toggle("open", !isOpen); else $(m).hidden = isOpen;
+      $(b).setAttribute("aria-expanded", String(!isOpen));
+    });
+  }
+  for (const id of ["add-card", "scan-photo", "import-vcf", "ai-keys"]) $(id).addEventListener("click", () => closePops());
+  document.addEventListener("click", (e) => { if (!e.target.closest(".menu-wrap")) closePops(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePops(); });
+
   const exportBtn = $("export-btn"), exportMenu = $("export-menu");
   function setMenu(open) {
     exportMenu.hidden = !open;
     exportBtn.setAttribute("aria-expanded", String(open));
     if (open) exportMenu.querySelector("button").focus();
   }
-  exportBtn.addEventListener("click", () => { if (!exportMenu.hidden) setMenu(false); else if (mayDownload()) setMenu(true); });
+  exportBtn.addEventListener("click", () => { closePops(); if (!exportMenu.hidden) setMenu(false); else if (mayDownload()) setMenu(true); });
   document.addEventListener("click", (e) => { if (!exportMenu.hidden && !e.target.closest(".menu-wrap")) setMenu(false); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !exportMenu.hidden) { setMenu(false); exportBtn.focus(); } });
   for (const b of exportMenu.querySelectorAll("button")) {
