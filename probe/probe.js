@@ -29,17 +29,31 @@
   });
   const container = CloudKit.getDefaultContainer();
 
-  function signedIn() {
+  const why = (e) => (e && (e.ckErrorCode || e.reason || e.message)) || String(e);
+  function signedIn(user) {
     $("run").disabled = false;
-    out.textContent = "Signed in. Press Run.";
-    container.whenUserSignsOut().then(signedOut);
+    $("recheck").hidden = true;
+    out.textContent = "Signed in" + (user && user.userRecordName ? "" : "") + ". Press Run the probe.";
+    container.whenUserSignsOut().then(signedOut).catch((e) => { out.textContent = "Sign-out error: " + why(e); });
   }
   function signedOut() {
     $("run").disabled = true;
-    out.textContent = "Waiting for sign-in…";
-    container.whenUserSignsIn().then(signedIn);
+    $("recheck").hidden = false;
+    out.textContent = "Not signed in. Press \u201cSign in with Apple ID\u201d above (it can take a few seconds to appear).\n"
+      + "If the Apple window closes and nothing changes here, press \u201cCheck sign-in again\u201d, or reload the page.";
+    container.whenUserSignsIn().then(signedIn).catch((e) => { out.textContent = "Sign-in error: " + why(e); });
   }
-  container.setUpAuth().then((user) => (user ? signedIn() : signedOut()));
+  function check() {
+    out.textContent = "Starting iCloud\u2026";
+    const slow = setTimeout(() => {
+      if (out.textContent.startsWith("Starting")) out.textContent = "iCloud is taking long to answer. Check the connection, or reload the page.";
+    }, 15000);
+    container.setUpAuth()
+      .then((user) => { clearTimeout(slow); user ? signedIn(user) : signedOut(); })
+      .catch((e) => { clearTimeout(slow); out.textContent = "iCloud could not start: " + why(e); $("recheck").hidden = false; });
+  }
+  $("recheck").addEventListener("click", check);
+  check();
 
   $("copy").addEventListener("click", async () => {
     try { await navigator.clipboard.writeText(out.textContent); $("copy").textContent = "Copied"; }
