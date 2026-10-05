@@ -4,10 +4,16 @@
 // (private database) and has JOINED (shared database): a team is a
 // "team-…" zone holding a TeamInfo record (its name) and TeamCard records.
 //
-// ⚠️ The same private database also holds the person's own card library
-// (SwiftData's zone). This page only ever opens "team-…" zones, and its
-// one write is Claim: `claimedBy` on a single TeamCard, as a conflict-
-// checked UPDATE (only that field changes; if someone else changed the
+// "MY CARDS" (2026-10-05): the same private database holds the person's
+// own card library (Core Data's zone, "com.apple.coredata.cloudkit.zone").
+// The page READS it — never writes: that format is Apple's mirror of the
+// apps' SwiftData store, and one record it did not write could stop the
+// person's whole sync. mycards.js turns those records into the shape the
+// team view shows. Downloads from My cards need the "unlocked" marker the
+// apps write into the zone "cardlio-web" (handbook/plan-web-library.md).
+//
+// WRITES go only to "team-…" zones: claims, edits, notes, ratings, new
+// and deleted cards, each conflict-checked (if someone else changed the
 // card first, CloudKit refuses and nothing is overwritten). JOIN accepts
 // an invite for the signed-in Apple ID — only possible when the team's
 // owner added that Apple ID (invite-only share).
@@ -34,7 +40,10 @@
     event: "",
     open: null,         // record shown in the detail dialog
     pendingNew: 0,      // cards the background poll saw that are not shown yet
-    view: storageGet("cardlio.team.view") || "grid"
+    view: storageGet("cardlio.team.view") || "grid",
+    mfilter: storageGet("cardlio.mine.filter") || "all",   // My cards: all, owed, reconnect, notes
+    country: "",
+    industry: ""
   };
   // A stable colour per person, for the avatars.
   function personHue(name) { let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
@@ -107,8 +116,9 @@
     const v = f(record, name);
     return typeof v === "string" ? v.trim() : "";
   }
-  function emails(record) {
-    const v = f(record, "emails");
+  function emails(record) { return listOf(record, "emails"); }
+  function listOf(record, name) {
+    const v = f(record, name);
     return Array.isArray(v) ? v.filter(Boolean) : [];
   }
   function fullName(r) {
@@ -135,7 +145,7 @@
   function addressLines(r) {
     const line1 = [str(r, "street"), str(r, "unit")].filter(Boolean).join(", ");
     const line2 = [str(r, "postalCode"), str(r, "city")].filter(Boolean).join(" ");
-    return [line1, line2, str(r, "country")].filter(Boolean);
+    return [str(r, "building"), line1, line2, str(r, "country")].filter(Boolean);
   }
   function fold(s) {
     return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
@@ -220,23 +230,31 @@
     return;
   }
 
-  CloudKit.configure({
+  // persist: false is the fallback when the browser refuses to keep the
+  // sign-in (AUTH_PERSIST_ERROR, seen once in Chrome): signed in for this
+  // tab only, rather than not at all.
+  const configure = (persist) => CloudKit.configure({
     containers: [{
       containerIdentifier: cfg.containerIdentifier,
       environment: cfg.environment,
       apiTokenAuth: {
         apiToken: cfg.apiToken,
-        persist: true,
+        persist,
         signInButton: { id: "apple-sign-in-button", theme: "white-with-outline" },
         signOutButton: { id: "apple-sign-out-button", theme: "black" }
       }
     }]
   });
-  const container = CloudKit.getDefaultContainer();
-  const sources = [
-    { db: container.privateCloudDatabase, owned: true },
-    { db: container.sharedCloudDatabase, owned: false }
-  ];
+  let container, sources;
+  function useContainer(persist) {
+    configure(persist);
+    container = CloudKit.getDefaultContainer();
+    sources = [
+      { db: container.privateCloudDatabase, owned: true },
+      { db: container.sharedCloudDatabase, owned: false }
+    ];
+  }
+  useContainer(true);
 
   async function zoneRecords(db, zoneID) {
     const records = [];
@@ -294,6 +312,96 @@
     return { teams, failures };
   }
 
+  // ------------------------------------------------------------- my cards
+  //
+  // The person's own library as one more "team": { personal: true }. It is
+  // kept across reloads (`personal`), because after the first full read
+  // only CHANGES are fetched, with the zone's sync token. desiredKeys keeps
+  // the photos and OCR text on the server (a full read without it was
+  // 18 MB / 17 s); `trimmed` records whether CloudKit honoured it.
+  const LIB = window.CardlioLibrary;
+  const MINE_ID = "mine";
+  let personal = null;
+
+  async function libraryChanges(db, zoneID, syncToken) {
+    const changed = [], deleted = [];
+    let token = syncToken, trimmed = true;
+    for (let page = 0; page < 400; page++) {
+      const zone = { zoneID, syncToken: token, desiredKeys: LIB.DESIRED_KEYS, desiredRecordTypes: [LIB.RECORD_TYPE] };
+      const response = await db.fetchRecordZoneChanges([zone], { desiredKeys: LIB.DESIRED_KEYS });
+      if (response.hasErrors) throw response.errors[0];
+      const z = response.zones && response.zones[0];
+      if (!z) break;
+      for (const r of z.records || []) {
+        if (r.deleted) deleted.push(r.recordName);
+        else if (r.recordType === LIB.RECORD_TYPE) {
+          if (r.fields && (r.fields.CD_rawText || r.fields.CD_imageData)) trimmed = false;
+          changed.push(r);
+        }
+      }
+      token = z.syncToken;
+      if (!z.moreComing) break;
+    }
+    return { changed, deleted, syncToken: token, trimmed };
+  }
+
+  // Apply the changes since the last read. With `announce`, cards that are
+  // new wait in pendingRecords behind the "N new cards" pill, as on a team.
+  async function syncPersonal(lib, announce) {
+    const first = lib.syncToken === undefined;
+    const { changed, deleted, syncToken, trimmed } = await libraryChanges(lib.db, lib.zoneID, lib.syncToken);
+    if (first) {
+      lib.trimmed = trimmed;
+      if (!trimmed) console.info("cardlio: iCloud ignored desiredKeys — My cards loaded every field (slower).");
+    }
+    lib.syncToken = syncToken;
+    let touched = false;
+    const gone = new Set(deleted);
+    for (const name of gone) if (lib.byName.delete(name)) touched = true;
+    lib.pendingRecords = (lib.pendingRecords || []).filter((p) => !gone.has(p.recordName));
+    for (const raw of changed) {
+      const card = LIB.adaptRecord(raw);
+      const old = lib.byName.get(raw.recordName);
+      const pendingAt = lib.pendingRecords.findIndex((p) => p.recordName === raw.recordName);
+      if (old) {
+        old.fields = card.fields; old.recordChangeTag = card.recordChangeTag; old.cardID = card.cardID;
+        touched = true;
+      } else if (pendingAt >= 0) {
+        lib.pendingRecords[pendingAt] = card;
+      } else if (announce) {
+        lib.pendingRecords.push(card);
+      } else {
+        lib.byName.set(raw.recordName, card);
+        touched = true;
+      }
+    }
+    if (touched || first) lib.records = LIB.dedupe([...lib.byName.values()]);
+    return { touched, added: !!lib.pendingRecords.length };
+  }
+
+  // The marker the apps write when the unlock is owned (one record per
+  // platform, in the person's own iCloud). No zone, no record → locked.
+  async function readUnlocked(db) {
+    try { return LIB.isUnlocked(await zoneRecords(db, { zoneName: LIB.WEB_ZONE })); }
+    catch (e) { return false; }
+  }
+
+  async function loadPersonal() {
+    const db = container.privateCloudDatabase;
+    const response = await db.fetchAllRecordZones();
+    if (response.hasErrors) throw response.errors[0];
+    const zone = (response.zones || []).find((z) => z.zoneID.zoneName === LIB.ZONE);
+    if (!zone) return null;   // cardlio never synced a library to this iCloud
+    const lib = personal && personal.db === db ? personal : {
+      id: MINE_ID, personal: true, owned: true, named: true, name: "My cards", createdAt: 0,
+      db, zoneID: zone.zoneID, byName: new Map(), records: [], pendingRecords: [], unlocked: false
+    };
+    await syncPersonal(lib, lib === personal);
+    lib.unlocked = await readUnlocked(db);
+    personal = lib;
+    return lib;
+  }
+
   // ------------------------------------------------------------- auth flow
 
   function signedOut() {
@@ -307,6 +415,8 @@
     $("refresh").hidden = true;
     state.teams = [];
     state.team = null;
+    personal = null;
+    document.body.classList.remove("mine", "locked");
     container.whenUserSignsIn().then(signedIn).catch((e) => toast(errorText(e), true));
   }
 
@@ -332,10 +442,15 @@
       renderSkeletons();
     }
     try {
-      const { teams, failures } = await discoverTeams();
-      state.teams = teams;
-      if (failures.length && !teams.length) showAlert("Could not read your teams from iCloud: " + failures[0]);
+      let mineError = "";
+      const [{ teams, failures }, mine] = await Promise.all([
+        discoverTeams(),
+        loadPersonal().catch((e) => { mineError = errorText(e); return personal; })
+      ]);
+      state.teams = mine ? [mine, ...teams] : teams;
+      if (failures.length && !teams.length && !mine) showAlert("Could not read your teams from iCloud: " + failures[0]);
       else if (failures.length) showAlert("Some teams could not be read: " + failures[0]);
+      else if (mineError) showAlert("Could not read your own cards from iCloud: " + mineError);
     } finally {
       $("refresh").classList.remove("spinning");
       $("loading-teams").hidden = true;
@@ -354,10 +469,11 @@
     const wantedCard = params.get("card");
     const wanted = params.get("team") ||
                    (state.team && state.team.id) || storageGet("cardlio.team.last");
-    // Otherwise the team with the most recent card: that is the fair in progress.
+    // Otherwise the team with the most recent card: that is the fair in
+    // progress. Someone with no team lands on My cards.
     const latest = (t) => t.records.reduce((m, r) => Math.max(m, scannedAt(r)), t.createdAt || 0);
-    const busiest = [...state.teams].sort((a, b) => latest(b) - latest(a))[0];
-    selectTeam(state.teams.find((t) => t.id === wanted) || busiest);
+    const busiest = state.teams.filter((t) => !t.personal).sort((a, b) => latest(b) - latest(a))[0];
+    selectTeam(state.teams.find((t) => t.id === wanted) || busiest || state.teams[0]);
     if (wantedCard) openDeepLinkedCard(wantedCard);
     startPolling();
   }
@@ -383,7 +499,9 @@
     const nav = $("team-nav");
     const select = $("team-select");
     nav.replaceChildren();
+    $("mine-nav").replaceChildren();
     select.replaceChildren();
+    $("mine-side").hidden = !state.teams.some((t) => t.personal);
     for (const team of state.teams) {
       const li = el("li");
       const b = el("button");
@@ -392,16 +510,35 @@
       const av = el("span", "avatar", initials(team.name));
       const mid = el("span");
       mid.append(el("div", "t-name", team.name));
-      mid.append(el("div", "t-sub", team.owned ? "Yours" : "Joined"));
+      mid.append(el("div", "t-sub", team.personal ? "Only you" : team.owned ? "Yours" : "Joined"));
       b.append(av, mid, el("span", "t-count", String(team.records.length)));
       b.addEventListener("click", () => selectTeam(team));
       li.append(b);
-      nav.append(li);
+      (team.personal ? $("mine-nav") : nav).append(li);
 
       const opt = el("option", null, team.name + " (" + team.records.length + ")");
       opt.value = team.id;
       select.append(opt);
     }
+  }
+
+  // My cards hides the team-only controls (body.mine) and, until the
+  // unlock marker is there, every download (body.locked).
+  function applyMode() {
+    const t = state.team;
+    document.body.classList.toggle("mine", !!(t && t.personal));
+    document.body.classList.toggle("locked", !!(t && t.personal && !t.unlocked));
+    if (t && t.personal && state.sort === "by") { state.sort = "new"; $("sort").value = "new"; }
+  }
+  function downloadsAllowed() {
+    return !state.team || !state.team.personal || !!state.team.unlocked;
+  }
+  // Every download path asks this first; false = the explanation instead.
+  function mayDownload() {
+    if (downloadsAllowed()) return true;
+    $("locked-dialog").showModal();
+    $("l-ok").focus();
+    return false;
   }
 
   function selectTeam(team) {
@@ -411,10 +548,11 @@
     $("new-pill").hidden = !(team.pendingRecords && team.pendingRecords.length);
     storageSet("cardlio.team.last", team.id);
     setHash({ team: team.id });
-    document.title = team.name + " · cardlio Team";
-    for (const b of $("team-nav").querySelectorAll("button")) {
+    document.title = team.name + (team.personal ? " · cardlio" : " · cardlio Team");
+    for (const b of document.querySelectorAll("#team-nav button, #mine-nav button")) {
       b.setAttribute("aria-current", b.dataset.team === team.id ? "true" : "false");
     }
+    applyMode();
     $("team-select").value = team.id;
     $("team-view").hidden = false;
     renderTeam();
@@ -436,6 +574,7 @@
   function renderTeam() {
     const team = state.team;
     const records = team.records;
+    if (team.personal) { renderPersonal(team); return; }
     $("team-name").textContent = team.name + " ";
     $("team-name").append(el("span", team.owned ? "badge" : "badge plain", team.owned ? "Yours" : "Joined"));
     const sub = [];
@@ -483,6 +622,13 @@
     if (claimed) s2.append(peopleCell(count((r) => str(r, "claimedBy"))));
     stats.append(s2);
     const s3 = el("div", "stat"); s3.append(el("div", "k", "Shared by"), peopleCell(count((r) => str(r, "scannedBy")))); stats.append(s3);
+    stats.append(weekStat(records));
+    renderEventChips(records);
+    renderGrid();
+  }
+
+  // The last seven days as bars (cards shared to a team, or added to the library).
+  function weekStat(records) {
     const s4 = el("div", "stat");
     const dayMs = 86400000, today = Math.floor(Date.now() / dayMs);
     const perDay = new Array(7).fill(0);
@@ -495,8 +641,10 @@
     const days = el("div", "days");
     days.append(el("span", null, dateFmt.format(new Date((today - 6) * dayMs))), el("span", null, "today"));
     s4.append(days);
-    stats.append(s4);
+    return s4;
+  }
 
+  function renderEventChips(records) {
     const events = [...new Set(records.map((r) => str(r, "eventTag")).filter(Boolean))].sort();
     const chips = $("event-chips");
     chips.replaceChildren();
@@ -510,24 +658,71 @@
         chips.append(c);
       }
     }
+  }
+
+  // My cards: the head, four numbers that matter for one person's
+  // network, and the country / industry pickers built from the cards.
+  function renderPersonal(lib) {
+    const records = lib.records;
+    $("team-name").textContent = lib.name + " ";
+    $("team-name").append(el("span", "badge plain", "Only you"));
+    const sub = ["Your cardlio library, read from your iCloud", "read only — edit cards in the app"];
+    if (!lib.unlocked) sub.push("downloads come with the unlock");
+    $("team-sub").textContent = sub.join(" · ");
+    state.dupes = null;
+    const stats = $("stats");
+    stats.replaceChildren();
+    const stat = (k, v, title) => { const c = el("div", "stat"); c.append(el("div", "k", k), el("div", "v", String(v))); if (title) c.title = title; stats.append(c); };
+    stat("Cards", records.length);
+    stat("Follow-ups owed", records.filter(LIB.followUpOwed).length, "Cards you marked as owing a follow-up");
+    const now = Date.now();
+    stat("Reconnect due", records.filter((r) => LIB.reconnectDue(r, now)).length, "Keep in touch: the time to reconnect has come");
+    stats.append(weekStat(records));
+    fillPicker($("country-filter"), "Any country", records.map((r) => str(r, "country")), "country");
+    fillPicker($("industry-filter"), "Any industry", records.map((r) => str(r, "industry")), "industry");
+    renderEventChips(records);
     renderGrid();
+  }
+  function fillPicker(select, anyLabel, values, key) {
+    const counts = new Map();
+    for (const v of values) if (v) counts.set(v, (counts.get(v) || 0) + 1);
+    const names = [...counts.keys()].sort((a, b) => a.localeCompare(b));
+    if (state[key] && !counts.has(state[key])) state[key] = "";
+    select.replaceChildren();
+    const any = el("option", null, anyLabel); any.value = ""; select.append(any);
+    for (const n of names) { const o = el("option", null, n + " (" + counts.get(n) + ")"); o.value = n; select.append(o); }
+    select.value = state[key] || "";
+    select.disabled = !names.length;
   }
 
   function visibleRecords() {
     const q = fold(state.query.trim());
+    const personal = !!state.team.personal, now = Date.now();
     let list = state.team.records.filter((r) => {
-      const taken = !!str(r, "claimedBy");
-      if (state.filter === "open" && taken) return false;
-      if (state.filter === "taken" && !taken) return false;
-      if (state.filter === "mine" && !isMine(r)) return false;
-      if (state.filter === "notes" && !str(r, "teamNotes").trim()) return false;
+      if (personal) {
+        if (state.mfilter === "owed" && !LIB.followUpOwed(r)) return false;
+        if (state.mfilter === "reconnect" && !LIB.reconnectDue(r, now)) return false;
+        if (state.mfilter === "notes" && !str(r, "notes")) return false;
+        if (state.country && str(r, "country") !== state.country) return false;
+        if (state.industry && str(r, "industry") !== state.industry) return false;
+      } else {
+        const taken = !!str(r, "claimedBy");
+        if (state.filter === "open" && taken) return false;
+        if (state.filter === "taken" && !taken) return false;
+        if (state.filter === "mine" && !isMine(r)) return false;
+        if (state.filter === "notes" && !str(r, "teamNotes").trim()) return false;
+      }
       if (state.rating && rating(r) !== state.rating) return false;
       if (state.event && str(r, "eventTag") !== state.event) return false;
       if (!q) return true;
       const hay = fold([fullName(r), str(r, "title"), str(r, "company"), emails(r).join(" "),
         str(r, "phone"), str(r, "mobile"), str(r, "website"), str(r, "city"), str(r, "country"),
         str(r, "eventTag"), str(r, "scannedBy"), str(r, "claimedBy"), str(r, "notes"), str(r, "teamNotes"),
-        rating(r) ? RATINGS[rating(r)].label : "", interests(r).join(" ")].join(" "));
+        rating(r) ? RATINGS[rating(r)].label : "", interests(r).join(" "),
+        // the library's extra fields (empty on a team card)
+        str(r, "honorific"), str(r, "fax"), listOf(r, "additionalPhones").join(" "), str(r, "building"), str(r, "street"),
+        str(r, "unit"), str(r, "postalCode"), str(r, "industry"), str(r, "linkedin"), str(r, "wechat"),
+        str(r, "translatedTitle"), str(r, "translatedCompany"), str(r, "translatedAddress")].join(" "));
       return q.split(/\s+/).every((w) => hay.includes(w));
     });
     const byText = (get) => (a, b) => get(a).localeCompare(get(b), undefined, { sensitivity: "base" });
@@ -545,7 +740,9 @@
     const total = state.team.records.length;
     const list = visibleRecords();
     grid.replaceChildren();
-    $("team-empty").hidden = total > 0;
+    const personal = !!state.team.personal;
+    $("team-empty").hidden = total > 0 || personal;
+    $("mine-empty").hidden = total > 0 || !personal;
     document.querySelector(".toolbar").hidden = total === 0;
     $("no-match").hidden = !(total > 0 && list.length === 0);
     $("result-line").textContent = total ? (list.length === total ? plural(total, "card") : list.length + " of " + plural(total, "card")) : "";
@@ -558,13 +755,15 @@
     if (asList) renderList(list);
     else list.forEach((r, i) => { const li = tile(r); li.style.setProperty("--i", Math.min(i, 24)); grid.append(li); });
     $("sel-hint").hidden = !(list.length > 1 && !state.selected.size);
-    if (state.filter === "mine" && !myName() && total) $("no-match").querySelector("p").textContent = "Claim a card first — \"Mine\" shows the cards claimed under your name.";
+    $("sel-hint").textContent = personal ? "Tick cards to download or export just those. Shift-click ticks a range."
+      : "Tick cards to claim, download or export just those. Shift-click ticks a range.";
+    if (!personal && state.filter === "mine" && !myName() && total) $("no-match").querySelector("p").textContent = "Claim a card first — \"Mine\" shows the cards claimed under your name.";
     else $("no-match").querySelector("p").textContent = "Try a different search, or show all cards.";
     renderSelectionBar(list);
     // Claim all: every unclaimed card among the ones SHOWN (the search,
     // the filter and the event chip narrow it), so "claim everything from
     // yesterday's event" is a filter plus one click.
-    const open = list.filter((r) => !str(r, "claimedBy"));
+    const open = personal ? [] : list.filter((r) => !str(r, "claimedBy"));
     $("claim-all").hidden = open.length < 2;
     $("claim-all-label").textContent = "Claim all " + plural(open.length, "unclaimed card");
     $("mb-claim").hidden = open.length < 2;
@@ -573,6 +772,9 @@
   // 5. The list view: a dense, sortable table for a big team.
   const LIST_COLUMNS = [
     ["name", "Name"], ["company", "Company"], ["rating", "Rating"], ["event", "Event"], ["by", "Shared by"], ["claimed", "Claimed by"], ["note", "Team note"]
+  ];
+  const MINE_COLUMNS = [
+    ["name", "Name"], ["company", "Company"], ["rating", "Rating"], ["event", "Event"], ["place", "Place"], ["added", "Added"], ["note", "Note"]
   ];
   function renderList(list) {
     const head = $("list").querySelector("thead"), body = $("list").querySelector("tbody");
@@ -584,7 +786,8 @@
     allBox.checked = list.length > 0 && list.every((r) => state.selected.has(r.recordName));
     allBox.addEventListener("change", () => { if (allBox.checked) list.forEach((r) => state.selected.add(r.recordName)); else list.forEach((r) => state.selected.delete(r.recordName)); renderGrid(); });
     allTh.append(allBox); tr.append(allTh);
-    for (const [key, label] of LIST_COLUMNS) {
+    const personal = !!state.team.personal;
+    for (const [key, label] of personal ? MINE_COLUMNS : LIST_COLUMNS) {
       const th = el("th");
       const sortKey = { name: "name", company: "company", rating: "rating", event: "event", by: "by" }[key];
       if (sortKey) {
@@ -618,6 +821,15 @@
       const rc = el("td", "rating-cell");
       if (rating(r)) rc.append(ratingMark(rating(r), true));
       if (interests(r).length) rc.append(el("small", null, interests(r).join(", ")));
+      if (personal) {
+        row.append(el("td", null, str(r, "company")), rc, el("td", null, str(r, "eventTag")),
+          el("td", null, [str(r, "city"), str(r, "country")].filter(Boolean).join(", ")), el("td", null, when(scannedAt(r))),
+          el("td", null, str(r, "notes").split(/\r?\n/).find(Boolean) || ""));
+        row.addEventListener("click", () => openDetail(r));
+        row.addEventListener("keydown", (e) => { if (e.key === "Enter") openDetail(r); });
+        body.append(row);
+        continue;
+      }
       row.append(el("td", null, str(r, "company")), rc, el("td", null, str(r, "eventTag")), el("td", null, str(r, "scannedBy")));
       const cl = el("td");
       const claimedBy = str(r, "claimedBy");
@@ -679,17 +891,27 @@
     if (role) tb.append(el("div", "co", role));
     const place = [str(r, "city"), str(r, "country")].filter(Boolean).join(", ");
     if (place) tb.append(el("div", "ln", place));
-    const teamNote = str(r, "teamNotes").split(/\r?\n/).find(Boolean);
+    const personal = !!r.personal;
+    const teamNote = str(r, personal ? "notes" : "teamNotes").split(/\r?\n/).find(Boolean);
     if (teamNote) { const n = el("div", "note"); n.append(icon("note"), el("span", null, teamNote)); tb.append(n); }
     const foot = el("div", "foot");
     const by = str(r, "scannedBy");
     foot.append(el("span", null, [by, when(scannedAt(r))].filter(Boolean).join(" · ")));
     const claimedBy = str(r, "claimedBy");
-    if (state.dupes && state.dupes.has(r.recordName)) foot.append(el("span", "status dupe", "Possible duplicate"));
-    foot.append(el("span", claimedBy ? "status taken" : "status open", claimedBy ? "Claimed" : "Unclaimed"));
+    let status = "";
+    if (personal) {
+      // Your own card: what you owe this person, not who holds the lead.
+      if (LIB.followUpOwed(r)) status = "follow-up owed";
+      else if (LIB.reconnectDue(r)) status = "reconnect due";
+      if (status) foot.append(el("span", status === "follow-up owed" ? "status owed" : "status due", status === "follow-up owed" ? "Follow up" : "Reconnect"));
+    } else {
+      if (state.dupes && state.dupes.has(r.recordName)) foot.append(el("span", "status dupe", "Possible duplicate"));
+      foot.append(el("span", claimedBy ? "status taken" : "status open", claimedBy ? "Claimed" : "Unclaimed"));
+    }
     tb.append(foot);
     b.append(ph, tb);
-    b.setAttribute("aria-label", displayName(r) + (role ? ", " + role : "") + (rating(r) ? ", " + RATINGS[rating(r)].label + " lead" : "") + (claimedBy ? ", claimed by " + claimedBy : ", unclaimed"));
+    b.setAttribute("aria-label", displayName(r) + (role ? ", " + role : "") + (rating(r) ? ", " + RATINGS[rating(r)].label + " lead" : "") +
+      (personal ? (status ? ", " + status : "") : claimedBy ? ", claimed by " + claimedBy : ", unclaimed"));
     b.addEventListener("click", () => openDetail(r));
     li.append(b);
 
@@ -735,16 +957,16 @@
     const hiddenCount = sel.filter((r) => !shown.includes(r)).length;
     $("sel-count").textContent = plural(n, "card") + " selected" + (hiddenCount ? " (" + hiddenCount + " not shown)" : "");
     $("sel-all").hidden = shown.every((r) => state.selected.has(r.recordName));
-    $("sel-claim").hidden = open.length === 0;
+    $("sel-claim").hidden = !!state.team.personal || open.length === 0;
     $("sel-claim").textContent = open.length === n ? "Claim" : "Claim " + open.length + " unclaimed";
   }
   $("sel-all").addEventListener("click", () => { visibleRecords().forEach((r) => state.selected.add(r.recordName)); renderGrid(); });
   $("sel-none").addEventListener("click", () => { state.selected.clear(); renderGrid(); });
   $("sel-claim").addEventListener("click", () => { const open = selectedRecords().filter((r) => !str(r, "claimedBy")); if (open.length) askClaimAll(open); });
-  $("sel-vcf").addEventListener("click", async () => { const s = selectedRecords(); await downloadVCard(s, false); toast("Exported " + plural(s.length, "card")); });
-  $("sel-csv").addEventListener("click", () => { const s = selectedRecords(); downloadCSV(s); toast("Exported " + plural(s.length, "card")); });
-  $("sel-zip").addEventListener("click", async () => { const s = selectedRecords(); toast("Packing " + plural(s.length, "card") + "…"); await downloadZip(s); toast("Exported " + plural(s.length, "card")); });
-  $("sel-print").addEventListener("click", () => printSheet(selectedRecords(), "selected"));
+  $("sel-vcf").addEventListener("click", async () => { if (!mayDownload()) return; const s = selectedRecords(); await downloadVCard(s, false); toast("Exported " + plural(s.length, "card")); });
+  $("sel-csv").addEventListener("click", () => { if (!mayDownload()) return; const s = selectedRecords(); downloadCSV(s); toast("Exported " + plural(s.length, "card")); });
+  $("sel-zip").addEventListener("click", async () => { if (!mayDownload()) return; const s = selectedRecords(); toast("Packing " + plural(s.length, "card") + "…"); await downloadZip(s); toast("Exported " + plural(s.length, "card")); });
+  $("sel-print").addEventListener("click", () => { if (mayDownload()) printSheet(selectedRecords(), "selected"); });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && state.selected.size && !$("detail").open && !document.querySelector("dialog[open]")) { state.selected.clear(); renderGrid(); }
   });
@@ -761,6 +983,11 @@
     const sheet = $("print-sheet");
     sheet.replaceChildren();
     sheet.append(el("h1", null, state.team.name));
+    if (!downloadsAllowed()) {   // the browser's own Print command, while locked
+      sheet.append(el("p", "meta", "Printing your cards comes with the cardlio unlock, the same one purchase as in the app."));
+      return;
+    }
+    const personal = !!state.team.personal;
     const what = scope.label === "selected" ? plural(scope.records.length, "selected card")
       : (scope.records.length === state.team.records.length ? plural(scope.records.length, "card") : scope.records.length + " of " + plural(state.team.records.length, "card") + " (filtered)");
     const bits = [what];
@@ -770,7 +997,9 @@
     sheet.append(el("p", "meta", bits.join(" · ")));
     const table = el("table"), thead = el("thead"), tbody = el("tbody");
     const hr = el("tr");
-    for (const h of ["", "Name", "Company", "Rating", "Contact", "Shared by", "Claimed by", "Team note"]) hr.append(el("th", h ? null : "tick", h));
+    const heads = personal ? ["", "Name", "Company", "Rating", "Contact", "Event", "Added", "Note"]
+      : ["", "Name", "Company", "Rating", "Contact", "Shared by", "Claimed by", "Team note"];
+    for (const h of heads) hr.append(el("th", h ? null : "tick", h));
     thead.append(hr);
     for (const r of scope.records) {
       const tr = el("tr");
@@ -779,6 +1008,11 @@
       const co = el("td"); co.append(el("span", null, str(r, "company"))); const place = [str(r, "city"), str(r, "country")].filter(Boolean).join(", "); if (place) co.append(el("small", null, place)); tr.append(co);
       const rt = el("td"); if (rating(r)) rt.append(el("b", null, RATINGS[rating(r)].label)); if (interests(r).length) rt.append(el("small", null, interests(r).join(", "))); tr.append(rt);
       const ct = el("td"); for (const line of [emails(r)[0], str(r, "mobile") || str(r, "phone")].filter(Boolean)) ct.append(el("div", null, line)); tr.append(ct);
+      if (personal) {
+        tr.append(el("td", null, str(r, "eventTag")), el("td", null, when(scannedAt(r))), el("td", "note", str(r, "notes")));
+        tbody.append(tr);
+        continue;
+      }
       tr.append(el("td", null, [str(r, "scannedBy"), when(scannedAt(r))].filter(Boolean).join("\n")));
       tr.append(el("td", str(r, "claimedBy") ? "claimed" : null, str(r, "claimedBy") || "—"));
       tr.append(el("td", "note", str(r, "teamNotes")));
@@ -786,7 +1020,7 @@
     }
     table.append(thead, tbody);
     sheet.append(table);
-    sheet.append(el("p", "foot", "team.cardlio.app · " + state.team.name));
+    sheet.append(el("p", "foot", personal ? "team.cardlio.app · My cards" : "team.cardlio.app · " + state.team.name));
   }
   window.addEventListener("beforeprint", buildPrintSheet);
   window.addEventListener("afterprint", () => { printScope = null; });
@@ -842,10 +1076,15 @@
     const fields = $("d-fields");
     fields.replaceChildren();
     for (const e of emails(r)) fields.append(fieldRow("mail", "Email", e, "mailto:" + encodeURIComponent(e).replace(/%40/g, "@")));
-    if (str(r, "mobile")) fields.append(fieldRow("mobile", "Mobile", str(r, "mobile"), "tel:" + str(r, "mobile").replace(/[^\d+]/g, "")));
-    if (str(r, "phone")) fields.append(fieldRow("phone", "Phone", str(r, "phone"), "tel:" + str(r, "phone").replace(/[^\d+]/g, "")));
+    const tel = (v) => "tel:" + v.replace(/[^\d+]/g, "");
+    if (str(r, "mobile")) fields.append(fieldRow("mobile", "Mobile", str(r, "mobile"), tel(str(r, "mobile"))));
+    if (str(r, "phone")) fields.append(fieldRow("phone", "Phone", str(r, "phone"), tel(str(r, "phone"))));
+    for (const p of listOf(r, "additionalPhones")) fields.append(fieldRow("phone", "Phone", p, tel(p)));
+    if (str(r, "fax")) fields.append(fieldRow("phone", "Fax", str(r, "fax")));
     const web = safeWebURL(str(r, "website"));
     if (str(r, "website")) fields.append(fieldRow("web", "Website", str(r, "website"), web));
+    if (str(r, "linkedin")) fields.append(fieldRow("web", "LinkedIn", str(r, "linkedin"), safeWebURL(str(r, "linkedin"))));
+    if (str(r, "wechat")) fields.append(fieldRow("mobile", "WeChat", str(r, "wechat")));
     const addr = addressLines(r);
     if (addr.length) {
       fields.append(fieldRow("pin", "Address", addr.join("\n"),
@@ -853,6 +1092,7 @@
       fields.lastChild.querySelector(".fv > a, .fv > div").style.whiteSpace = "pre-line";
     }
     if (str(r, "eventTag")) fields.append(fieldRow("tag", "Event", str(r, "eventTag")));
+    if (r.personal) personalRows(r, fields);
 
     const notes = str(r, "notes");
     $("d-notes").hidden = !notes;
@@ -881,7 +1121,9 @@
     }
 
     const by = str(r, "scannedBy");
-    $("d-prov").textContent = "Shared " + [by ? "by " + by : "", when(scannedAt(r)) ? "on " + when(scannedAt(r)) : ""].filter(Boolean).join(" ") + " into " + state.team.name + ".";
+    $("d-prov").textContent = r.personal
+      ? [when(scannedAt(r)) ? "Added to your library on " + when(scannedAt(r)) + "." : "", "Read only here — edit it in the cardlio app."].filter(Boolean).join(" ")
+      : "Shared " + [by ? "by " + by : "", when(scannedAt(r)) ? "on " + when(scannedAt(r)) : ""].filter(Boolean).join(" ") + " into " + state.team.name + ".";
 
     renderDetailActions(r);
     setHash({ team: state.team.id, card: r.recordName });
@@ -890,9 +1132,49 @@
     $("d-close").focus();
   }
 
+  // A library card's own fields: industry, the lead (read only here), what
+  // you owe this person, keep-in-touch, and the stored translation.
+  function personalRows(r, fields) {
+    if (str(r, "industry")) fields.append(fieldRow("tag", "Industry", str(r, "industry")));
+    if (rating(r) || interests(r).length) {
+      fields.append(fieldRow(rating(r) || "tag", "Lead", [rating(r) ? RATINGS[rating(r)].label : "", interests(r).join(", ")].filter(Boolean).join(" · ")));
+    }
+    const owed = f(r, "followUpOwedAt"), done = f(r, "followUpDoneAt");
+    if (done) fields.append(fieldRow("check", "Follow-up", "Done on " + when(done)));
+    else if (owed) fields.append(fieldRow("note", "Follow-up", "Owed since " + when(owed)));
+    const months = f(r, "keepInTouchMonths");
+    if (months) {
+      const every = months === 12 ? "every year" : months === 1 ? "every month" : "every " + months + " months";
+      fields.append(fieldRow("check", "Keep in touch", every + (LIB.reconnectDue(r) ? " · due now" : "")));
+    }
+    const translated = [str(r, "translatedTitle"), str(r, "translatedCompany"), str(r, "translatedAddress")].filter(Boolean);
+    if (translated.length) {
+      fields.append(fieldRow("tag", "Translation", translated.join("\n")));
+      fields.lastChild.querySelector(".fv > div").style.whiteSpace = "pre-line";
+    }
+  }
+
   function renderDetailActions(r) {
     const actions = $("d-actions");
     actions.replaceChildren();
+    if (r.personal) {
+      const dl = el("button", "btn primary");
+      dl.type = "button";
+      dl.append(icon("download"), el("span", null, "Download vCard"));
+      if (!downloadsAllowed()) dl.title = "Downloads come with the cardlio unlock";
+      dl.addEventListener("click", () => { if (mayDownload()) downloadVCard([r], true); });
+      const link = el("button", "btn");
+      link.type = "button";
+      link.append(el("span", null, "Copy link"));
+      link.title = "A link to this card — it opens for you, signed in with this Apple Account";
+      link.addEventListener("click", async () => {
+        const url = location.origin + location.pathname + "#" + new URLSearchParams({ team: MINE_ID, card: r.recordName }).toString();
+        try { await navigator.clipboard.writeText(url); toast("Link copied"); }
+        catch (e) { toast(url); }
+      });
+      actions.append(dl, link);
+      return;
+    }
     const claimedBy = str(r, "claimedBy");
     const dl = el("button", "btn");
     dl.type = "button";
@@ -1225,6 +1507,7 @@
     const team = state.team;
     if (!team || polling || (!force && document.visibilityState !== "visible") || $("claim-dialog").open || $("delete-dialog").open) return;
     polling = true;
+    if (team.personal) { try { await pollPersonal(team); } catch (e) { /* silent, like a team poll */ } finally { polling = false; } return; }
     try {
       const fresh = (await zoneRecords(team.db, team.zoneID)).filter((x) => x.recordType === "TeamCard");
       const known = new Map(team.records.map((r) => [r.recordName, r]));
@@ -1256,9 +1539,34 @@
       polling = false;
     }
   }
+  // My cards: only the changes since the last read (the sync token), and
+  // the unlock marker again — a purchase in the app shows up within a minute.
+  async function pollPersonal(lib) {
+    const { touched, added } = await syncPersonal(lib, true);
+    const unlocked = await readUnlocked(lib.db);
+    const unlockChanged = unlocked !== lib.unlocked;
+    lib.unlocked = unlocked;
+    if (state.team !== lib) return;
+    if (added) {
+      $("new-pill").textContent = plural(lib.pendingRecords.length, "new card") + " — show";
+      $("new-pill").hidden = false;
+    }
+    if (touched || unlockChanged) {
+      if (state.open && !lib.records.includes(state.open)) { state.open = null; $("detail").close(); }
+      applyMode();
+      renderTeamNav();
+      renderTeam();
+      if (state.open) renderDetailActions(state.open);
+    }
+  }
+
   $("new-pill").addEventListener("click", () => {
     const team = state.team;
-    if (team && team.pendingRecords) { team.records.push(...team.pendingRecords); team.pendingRecords = []; }
+    if (team && team.personal) {
+      for (const card of team.pendingRecords || []) team.byName.set(card.recordName, card);
+      team.pendingRecords = [];
+      team.records = LIB.dedupe([...team.byName.values()]);
+    } else if (team && team.pendingRecords) { team.records.push(...team.pendingRecords); team.pendingRecords = []; }
     $("new-pill").hidden = true;
     renderTeamNav();
     renderTeam();
@@ -1405,6 +1713,7 @@
   async function photoBase64(r) {
     const url = photoURL(r);
     if (!url) return "";
+    if (url.startsWith("data:")) return url.slice(url.indexOf(",") + 1);   // a library thumbnail, already base64
     try {
       const res = await fetch(url);
       if (!res.ok) return "";
@@ -1416,6 +1725,18 @@
       return ""; // the image host may refuse a script download; the contact still exports
     }
   }
+  // The photo's bytes for the ZIP: a data: URL is decoded here (the page's
+  // CSP does not let fetch() read one), anything else is downloaded.
+  async function photoBytes(url) {
+    if (url.startsWith("data:")) {
+      const bin = atob(url.slice(url.indexOf(",") + 1));
+      const a = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
+      return a;
+    }
+    const res = await fetch(url);
+    return res.ok ? new Uint8Array(await res.arrayBuffer()) : null;
+  }
 
   async function vcard(r, withPhoto) {
     const L = ["BEGIN:VCARD", "VERSION:3.0"];
@@ -1426,15 +1747,18 @@
     for (const e of emails(r)) L.push("EMAIL;TYPE=INTERNET,WORK:" + vEsc(e));
     if (str(r, "mobile")) L.push("TEL;TYPE=CELL:" + vEsc(str(r, "mobile")));
     if (str(r, "phone")) L.push("TEL;TYPE=WORK,VOICE:" + vEsc(str(r, "phone")));
+    for (const p of listOf(r, "additionalPhones")) L.push("TEL;TYPE=VOICE:" + vEsc(p));
+    if (str(r, "fax")) L.push("TEL;TYPE=WORK,FAX:" + vEsc(str(r, "fax")));
     const url = safeWebURL(str(r, "website"));
     if (url) L.push("URL:" + vEsc(url));
     if (addressLines(r).length) {
-      L.push("ADR;TYPE=WORK:" + ["", str(r, "unit"), str(r, "street"), str(r, "city"), "", str(r, "postalCode"), str(r, "country")].map(vEsc).join(";"));
+      const street = [str(r, "building"), str(r, "street")].filter(Boolean).join(", ");
+      L.push("ADR;TYPE=WORK:" + ["", str(r, "unit"), street, str(r, "city"), "", str(r, "postalCode"), str(r, "country")].map(vEsc).join(";"));
     }
     const note = [str(r, "notes"), str(r, "eventTag") ? "Event: " + str(r, "eventTag") : "",
-      "From the cardlio team \"" + state.team.name + "\"" + (str(r, "scannedBy") ? ", shared by " + str(r, "scannedBy") : "")]
+      r.personal ? "" : "From the cardlio team \"" + state.team.name + "\"" + (str(r, "scannedBy") ? ", shared by " + str(r, "scannedBy") : "")]
       .filter(Boolean).join("\n");
-    L.push("NOTE:" + vEsc(note));
+    if (note) L.push("NOTE:" + vEsc(note));
     if (withPhoto) {
       const b64 = await photoBase64(r);
       if (b64) L.push("PHOTO;ENCODING=b;TYPE=JPEG:" + b64);
@@ -1482,6 +1806,7 @@
     saveFile(fileSafe(state.team.name) + ".csv", "text/csv;charset=utf-8", csvText(records));
   }
   function csvText(records) {
+    if (state.team && state.team.personal) return csvMine(records);
     const head = ["First name", "Last name", "Title", "Company", "Emails", "Phone", "Mobile", "Website",
       "Street", "Unit", "Postal code", "City", "Country", "Event", "Rating", "Interests", "Notes", "Team notes", "Shared by", "Shared on", "Claimed by"];
     const rows = records.map((r) => [str(r, "firstName"), str(r, "lastName"), str(r, "title"), str(r, "company"),
@@ -1489,6 +1814,20 @@
       str(r, "postalCode"), str(r, "city"), str(r, "country"), str(r, "eventTag"),
       rating(r) ? RATINGS[rating(r)].label : "", interests(r).join("; "), str(r, "notes"), str(r, "teamNotes"), str(r, "scannedBy"),
       scannedAt(r) ? new Date(scannedAt(r)).toISOString().slice(0, 10) : "", str(r, "claimedBy")]);
+    return "\ufeff" + [head, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n") + "\r\n";
+  }
+
+  // My cards: the library's own columns (no team, no claims).
+  function csvMine(records) {
+    const day = (r, k) => (f(r, k) ? new Date(f(r, k)).toISOString().slice(0, 10) : "");
+    const head = ["Honorific", "First name", "Last name", "Title", "Company", "Industry", "Emails", "Phone", "Mobile", "Fax", "Other phones",
+      "Website", "LinkedIn", "WeChat", "Building", "Street", "Unit", "Postal code", "City", "Country", "Event", "Rating", "Interests",
+      "Follow-up owed", "Follow-up done", "Keep in touch (months)", "Notes", "Added"];
+    const rows = records.map((r) => [str(r, "honorific"), str(r, "firstName"), str(r, "lastName"), str(r, "title"), str(r, "company"),
+      str(r, "industry"), emails(r).join("; "), str(r, "phone"), str(r, "mobile"), str(r, "fax"), listOf(r, "additionalPhones").join(" / "),   // "/" keeps the formula guard quiet on "+…"
+      str(r, "website"), str(r, "linkedin"), str(r, "wechat"), str(r, "building"), str(r, "street"), str(r, "unit"), str(r, "postalCode"),
+      str(r, "city"), str(r, "country"), str(r, "eventTag"), rating(r) ? RATINGS[rating(r)].label : "", interests(r).join("; "),
+      day(r, "followUpOwedAt"), day(r, "followUpDoneAt"), f(r, "keepInTouchMonths") || "", str(r, "notes"), day(r, "addedAt")]);
     return "\ufeff" + [head, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n") + "\r\n";
   }
 
@@ -2030,20 +2369,22 @@
   // Drop anywhere on the page while signed in.
   let dragDepth = 0;
   const hasFiles = (e) => e.dataTransfer && [...e.dataTransfer.types].includes("Files");
+  const readOnlyView = () => !!(state.team && state.team.personal);
   document.addEventListener("dragenter", (e) => {
-    if (!hasFiles(e) || $("app").hidden) return;
+    if (!hasFiles(e) || $("app").hidden || readOnlyView()) return;
     e.preventDefault();
     dragDepth++;
     $("drop-into").textContent = (state.team ? "into " + state.team.name : "") + " — a .vcf file, or a photo of a card";
     $("drop-hint").hidden = false;
   });
-  document.addEventListener("dragover", (e) => { if (hasFiles(e) && !$("app").hidden) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; } });
+  document.addEventListener("dragover", (e) => { if (hasFiles(e) && !$("app").hidden) { e.preventDefault(); e.dataTransfer.dropEffect = readOnlyView() ? "none" : "copy"; } });
   document.addEventListener("dragleave", (e) => { if (!hasFiles(e)) return; dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) $("drop-hint").hidden = true; });
   document.addEventListener("drop", async (e) => {
     if (!hasFiles(e) || $("app").hidden) return;
     e.preventDefault();
     dragDepth = 0;
     $("drop-hint").hidden = true;
+    if (readOnlyView()) { toast("My cards is read only here — open a team to add cards, or add them in the cardlio app", true); return; }
     await importFiles([...e.dataTransfer.files]);
   });
 
@@ -2111,12 +2452,12 @@
       const url = photoURL(r);
       if (!url) continue;
       try {
-        const res = await fetch(url);
-        if (!res.ok) continue;
+        const data = await photoBytes(url);
+        if (!data) continue;
         let name = fileSafe(displayName(r));
         const n = (seen.get(name) || 0) + 1; seen.set(name, n);
         if (n > 1) name += " " + n;
-        entries.push({ name: "photos/" + name + ".jpg", data: new Uint8Array(await res.arrayBuffer()) });
+        entries.push({ name: "photos/" + name + ".jpg", data });
       } catch (e) { /* the image host may refuse; the vCard still carries what it could */ }
     }
     return { blob: zipStore(entries), count: entries.length };
@@ -2152,6 +2493,18 @@
     b.setAttribute("aria-pressed", String(b.dataset.filter === state.filter));
   }
   if (![...document.querySelectorAll("#filter-group button")].some((b) => b.dataset.filter === state.filter)) state.filter = "all";
+  if (!["all", "owed", "reconnect", "notes"].includes(state.mfilter)) state.mfilter = "all";
+  for (const b of document.querySelectorAll("#mine-filter-group button")) {
+    b.addEventListener("click", () => {
+      state.mfilter = b.dataset.mfilter;
+      storageSet("cardlio.mine.filter", state.mfilter);
+      for (const x of document.querySelectorAll("#mine-filter-group button")) x.setAttribute("aria-pressed", String(x === b));
+      renderGrid();
+    });
+    b.setAttribute("aria-pressed", String(b.dataset.mfilter === state.mfilter));
+  }
+  $("country-filter").addEventListener("change", (e) => { state.country = e.target.value; renderGrid(); });
+  $("industry-filter").addEventListener("change", (e) => { state.industry = e.target.value; renderGrid(); });
   if (!RATINGS[state.rating]) state.rating = "";
   for (const b of document.querySelectorAll("#rating-group button")) {
     b.addEventListener("click", () => {
@@ -2173,7 +2526,7 @@
   $("mb-search").addEventListener("click", () => { $("search").scrollIntoView({ block: "center" }); $("search").focus(); });
   $("mb-add").addEventListener("click", () => openCardForm(null));
   $("mb-claim").addEventListener("click", () => $("claim-all").click());
-  $("mb-export").addEventListener("click", () => { $("export-btn").scrollIntoView({ block: "center" }); setMenu(true); });
+  $("mb-export").addEventListener("click", () => { if (!mayDownload()) return; $("export-btn").scrollIntoView({ block: "center" }); setMenu(true); });
 
   const exportBtn = $("export-btn"), exportMenu = $("export-menu");
   function setMenu(open) {
@@ -2181,12 +2534,13 @@
     exportBtn.setAttribute("aria-expanded", String(open));
     if (open) exportMenu.querySelector("button").focus();
   }
-  exportBtn.addEventListener("click", () => setMenu(exportMenu.hidden));
+  exportBtn.addEventListener("click", () => { if (!exportMenu.hidden) setMenu(false); else if (mayDownload()) setMenu(true); });
   document.addEventListener("click", (e) => { if (!exportMenu.hidden && !e.target.closest(".menu-wrap")) setMenu(false); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !exportMenu.hidden) { setMenu(false); exportBtn.focus(); } });
   for (const b of exportMenu.querySelectorAll("button")) {
     b.addEventListener("click", async () => {
       setMenu(false);
+      if (!mayDownload()) return;
       const list = visibleRecords();
       if (!list.length) { toast("No cards to export", true); return; }
       if (b.dataset.export === "csv") downloadCSV(list);
@@ -2218,10 +2572,15 @@
   if (cfg.testHooks) window.__cardlioTeamPoll = () => pollTeam(true);
   if (cfg.testHooks) window.__cardlioCsv = () => csvText(visibleRecords());   // the fake-CloudKit harness only (its tab may be hidden)
 
-  container.setUpAuth()
-    .then((user) => (user ? signedIn() : signedOut()))
-    .catch((e) => {
-      $("welcome").hidden = false;
-      toast("iCloud could not start: " + errorText(e), true);
-    });
+  const startAuth = () => container.setUpAuth().then((user) => (user ? signedIn() : signedOut()));
+  startAuth().catch((e) => {
+    if (/AUTH_PERSIST_ERROR/.test(errorText(e))) {
+      useContainer(false);
+      return startAuth();
+    }
+    throw e;
+  }).catch((e) => {
+    $("welcome").hidden = false;
+    toast("iCloud could not start: " + errorText(e), true);
+  });
 })();

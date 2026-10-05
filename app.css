@@ -652,3 +652,12 @@ dialog[open] { animation: dialog-in 0.22s ease; }
 .lead-box input { font: inherit; font-size: 14px; color: var(--ink); background: var(--bg-alt); border: 1px solid var(--line-strong); border-radius: 10px; padding: 7px 10px; width: 100%; box-sizing: border-box; }
 @media (max-width: 700px) { #rating-group { max-width: 100%; overflow-x: auto; } #rating-group button { white-space: nowrap; } }
 @media print { .print-sheet td small { display: block; } }
+
+/* "My cards" — the person's own library (read only). Team-only controls
+   go away; downloads wait for the unlock marker (body.locked). */
+body.mine .team-only { display: none !important; }
+body:not(.mine) .mine-only { display: none !important; }
+body.mine.locked .pick, body.mine.locked .pick-cell, body.mine.locked .sel-hint { display: none !important; }
+#mine-side .team-nav { margin-bottom: 14px; }
+.status.owed { background: var(--accent-soft); color: var(--accent); }
+.status.due { background: #fff3d6; color: #8a5a00; }

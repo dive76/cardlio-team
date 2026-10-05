@@ -1,8 +1,8 @@
 // team.cardlio.app — a small service worker so the page installs and its
 // shell opens offline. Only same-origin shell files are cached; every
 // iCloud call (apple-cloudkit.com, icloud.com) goes to the network.
-const CACHE = "cardlio-team-v3";
-const SHELL = ["/", "/index.html", "/app.css?v=3", "/app.js?v=3", "/config.js?v=1", "/manifest.webmanifest", "/assets/icon-192.png", "/assets/icon-512.png"];
+const CACHE = "cardlio-team-v4";
+const SHELL = ["/", "/index.html", "/app.css?v=3", "/app.js?v=3", "/mycards.js?v=1", "/config.js?v=1", "/manifest.webmanifest", "/assets/icon-192.png", "/assets/icon-512.png"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

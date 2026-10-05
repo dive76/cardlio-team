@@ -14,7 +14,7 @@
 <meta name="theme-color" content="#4F46E5">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="assets/icon-192.png">
-<link rel="stylesheet" href="app.css?v=11">
+<link rel="stylesheet" href="app.css?v=12">
 </head>
 <body>
 
@@ -61,6 +61,10 @@
 <!-- ================= signed in ================= -->
 <div class="app" id="app" hidden>
   <nav class="sidebar" aria-label="Teams">
+    <div id="mine-side" hidden>
+      <div class="side-title">Your library</div>
+      <ul class="team-nav" id="mine-nav"></ul>
+    </div>
     <div class="side-title">Teams</div>
     <ul class="team-nav" id="team-nav"></ul>
     <button class="btn join-side" type="button" id="join-open">
@@ -97,7 +101,7 @@
             <h1 id="team-name"></h1>
             <p class="team-sub" id="team-sub"></p>
           </div>
-          <div class="people" id="team-people" aria-label="People on this team"></div>
+          <div class="people team-only" id="team-people" aria-label="People on this team"></div>
         </div>
       </div>
 
@@ -109,13 +113,21 @@
           <span class="sr-only">Search cards</span>
           <input id="search" type="search" placeholder="Search name, company, email, city…" autocomplete="off" spellcheck="false">
         </label>
-        <div class="segmented" id="filter-group" role="group" aria-label="Show">
+        <div class="segmented team-only" id="filter-group" role="group" aria-label="Show">
           <button type="button" data-filter="all" aria-pressed="true">All</button>
           <button type="button" data-filter="open" aria-pressed="false">Unclaimed</button>
           <button type="button" data-filter="taken" aria-pressed="false">Claimed</button>
           <button type="button" data-filter="mine" aria-pressed="false" title="Cards claimed under your name">Mine</button>
           <button type="button" data-filter="notes" aria-pressed="false" title="Cards that carry a team note">With notes</button>
         </div>
+        <div class="segmented mine-only" id="mine-filter-group" role="group" aria-label="Show">
+          <button type="button" data-mfilter="all" aria-pressed="true">All</button>
+          <button type="button" data-mfilter="owed" aria-pressed="false" title="Cards you marked as owing a follow-up">Follow-up owed</button>
+          <button type="button" data-mfilter="reconnect" aria-pressed="false" title="Keep in touch: the time to reconnect has come">Reconnect due</button>
+          <button type="button" data-mfilter="notes" aria-pressed="false" title="Cards that carry a note">With notes</button>
+        </div>
+        <label class="mine-only"><span class="sr-only">Country</span><select class="select" id="country-filter"><option value="">Any country</option></select></label>
+        <label class="mine-only"><span class="sr-only">Industry</span><select class="select" id="industry-filter"><option value="">Any industry</option></select></label>
         <div class="segmented" id="rating-group" role="group" aria-label="Lead rating">
           <button type="button" data-rating="" aria-pressed="true">Any rating</button>
           <button type="button" data-rating="hot" aria-pressed="false">Hot</button>
@@ -138,28 +150,28 @@
             <option value="name">Name</option>
             <option value="company">Company</option>
             <option value="event">Event</option>
-            <option value="by">Shared by</option>
+            <option value="by" class="team-only">Shared by</option>
             <option value="rating">Rating (hot first)</option>
           </select>
         </label>
-        <button class="btn" id="add-card" type="button" title="Add a card by hand — someone you met, typed in">
+        <button class="btn team-only" id="add-card" type="button" title="Add a card by hand — someone you met, typed in">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
           Add card
         </button>
-        <button class="btn" id="scan-photo" type="button" title="Read a photo of a business card with Claude or Gemini, using your own API key — or drop the photo anywhere on this page">
+        <button class="btn team-only" id="scan-photo" type="button" title="Read a photo of a business card with Claude or Gemini, using your own API key — or drop the photo anywhere on this page">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg>
           Scan photo
         </button>
         <input type="file" id="photo-file" accept="image/*" multiple hidden>
-        <button class="btn icon-only" id="ai-keys" type="button" title="Your AI keys for reading card photos" aria-label="AI keys">
+        <button class="btn icon-only team-only" id="ai-keys" type="button" title="Your AI keys for reading card photos" aria-label="AI keys">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l2 2M14 9l2 2"/></svg>
         </button>
-        <button class="btn" id="import-vcf" type="button" title="Import contacts from a vCard file (.vcf) — or drop the file anywhere on this page">
+        <button class="btn team-only" id="import-vcf" type="button" title="Import contacts from a vCard file (.vcf) — or drop the file anywhere on this page">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V5"/><path d="M7.5 9.5L12 5l4.5 4.5"/><path d="M5 19h14"/></svg>
           Import vCard
         </button>
         <input type="file" id="vcf-file" accept=".vcf,text/vcard,text/x-vcard" multiple hidden>
-        <button class="btn" id="claim-all" type="button" hidden>
+        <button class="btn team-only" id="claim-all" type="button" hidden>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M5 19h14"/></svg>
           <span id="claim-all-label">Claim all unclaimed</span>
         </button>
@@ -188,6 +200,11 @@
         <h2>Nothing matches</h2>
         <p>Try a different search, or show all cards.</p>
       </div>
+      <div id="mine-empty" class="empty" hidden>
+        <div class="art" aria-hidden="true"><i></i><i></i><i></i></div>
+        <h2>No cards in your library yet</h2>
+        <p>Cards you scan in the cardlio app on iPhone or Mac appear here once they have synced through iCloud.</p>
+      </div>
       <div id="team-empty" class="empty" hidden>
         <div class="art" aria-hidden="true"><i></i><i></i><i></i></div>
         <h2>No cards in this team yet</h2>
@@ -206,7 +223,7 @@
   <button class="link" type="button" id="sel-all">Select all shown</button>
   <button class="link" type="button" id="sel-none">Clear</button>
   <span class="spacer"></span>
-  <button class="btn primary" type="button" id="sel-claim">Claim</button>
+  <button class="btn primary team-only" type="button" id="sel-claim">Claim</button>
   <button class="btn" type="button" id="sel-vcf">vCard</button>
   <button class="btn" type="button" id="sel-csv">CSV</button>
   <button class="btn" type="button" id="sel-zip">ZIP</button>
@@ -219,9 +236,9 @@
 <!-- phone action bar -->
 <nav class="mobile-bar" id="mobile-bar" aria-label="Actions" hidden>
   <button type="button" id="mb-search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg>Search</button>
-  <button type="button" id="mb-scan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg>Scan</button>
-  <button type="button" id="mb-add"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Add</button>
-  <button type="button" id="mb-claim" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M5 19h14"/></svg>Claim all</button>
+  <button type="button" class="team-only" id="mb-scan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg>Scan</button>
+  <button type="button" class="team-only" id="mb-add"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Add</button>
+  <button type="button" class="team-only" id="mb-claim" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M5 19h14"/></svg>Claim all</button>
   <button type="button" id="mb-export"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V5"/><path d="M7.5 9.5L12 5l4.5 4.5"/><path d="M5 19h14"/></svg>Export</button>
 </nav>
 
@@ -248,14 +265,14 @@
       </div>
       <div class="fields" id="d-fields"></div>
       <div class="notes" id="d-notes" hidden></div>
-      <div class="lead-box">
+      <div class="lead-box team-only">
         <div class="lead-label">Lead <span>the team's rating — set here or in the cardlio app</span></div>
         <div class="lead-rate" id="d-rating" role="group" aria-label="Lead rating"></div>
         <div class="lead-tags" id="d-interests"></div>
         <input id="d-interest-add" list="interest-list" maxlength="40" placeholder="Add an interest and press Enter" autocomplete="off" aria-label="Add an interest">
         <datalist id="interest-list"></datalist>
       </div>
-      <div class="team-notes">
+      <div class="team-notes team-only">
         <label for="d-team-notes">Team notes <span>shared with everyone on the team — who called, what was promised</span></label>
         <textarea id="d-team-notes" rows="3" maxlength="4000" placeholder="e.g. 20 Sep · called, send the brochure"></textarea>
         <div class="row"><button class="btn" type="button" id="d-team-notes-save" disabled>Save note</button></div>
@@ -279,6 +296,17 @@
     <div class="row">
       <button class="btn" type="button" id="c-cancel">Cancel</button>
       <button class="btn primary" type="submit" id="c-go">Claim and download</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="locked-dialog" class="small-dialog" aria-labelledby="l-title">
+  <form method="dialog">
+    <h2 id="l-title">Downloads come with the unlock</h2>
+    <p>Looking through your cards here is free. Downloading them — contacts (vCard), a spreadsheet, a ZIP or a printed sheet — comes with the cardlio unlock, the same one purchase as in the app.</p>
+    <p class="fine">Bought it already? Open cardlio on that iPhone or Mac once, then reload this page. To buy it, open cardlio and tap any locked feature.</p>
+    <div class="row">
+      <button class="btn primary" type="submit" id="l-ok">OK</button>
     </div>
   </form>
 </dialog>
@@ -409,6 +437,7 @@
 
 <script src="config.js?v=1"></script>
 <script src="https://cdn.apple-cloudkit.com/ck/2/cloudkit.js"></script>
-<script src="app.js?v=15"></script>
+<script src="mycards.js?v=1"></script>
+<script src="app.js?v=16"></script>
 </body>
 </html>
