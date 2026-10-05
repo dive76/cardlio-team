@@ -6,14 +6,16 @@
 //
 // "MY CARDS" (2026-10-05): the same private database holds the person's
 // own card library (Core Data's zone, "com.apple.coredata.cloudkit.zone").
-// The page READS it — never writes: that format is Apple's mirror of the
-// apps' SwiftData store, and one record it did not write could stop the
-// person's whole sync. mycards.js turns those records into the shape the
+// That format is Apple's mirror of the apps' SwiftData store, and one
+// record it cannot take could stop the person's whole sync — so the page
+// only ever UPDATES four fields of an existing card (leadRating, eventTag,
+// notes, followUpDoneAt + modifiedAt; see updateLibraryCard), proven in
+// Development first. It never creates or deletes a library record. mycards.js turns those records into the shape the
 // team view shows. Downloads from My cards need the "unlocked" marker the
 // apps write into the zone "cardlio-web" (handbook/plan-web-library.md).
 //
-// WRITES go only to "team-…" zones: claims, edits, notes, ratings, new
-// and deleted cards, each conflict-checked (if someone else changed the
+// TEAM WRITES ("team-…" zones): claims, edits, notes, ratings, new and
+// deleted cards, each conflict-checked (if someone else changed the
 // card first, CloudKit refuses and nothing is overwritten). JOIN accepts
 // an invite for the signed-in Apple ID — only possible when the team's
 // owner added that Apple ID (invite-only share).
@@ -685,7 +687,7 @@
     const records = lib.records;
     $("team-name").textContent = lib.name + " ";
     $("team-name").append(el("span", "badge plain", "Only you"));
-    const sub = ["Your cardlio library, read from your iCloud", "read only — edit cards in the app"];
+    const sub = ["Your cardlio library, from your iCloud", "rate, tag, add notes and mark follow-ups here; edit everything else in the app"];
     if (!lib.unlocked) sub.push("downloads come with the unlock");
     $("team-sub").textContent = sub.join(" · ");
     state.dupes = null;
@@ -1110,8 +1112,8 @@
         "https://maps.apple.com/?q=" + encodeURIComponent(addr.join(", "))));
       fields.lastChild.querySelector(".fv > a, .fv > div").style.whiteSpace = "pre-line";
     }
-    if (str(r, "eventTag")) fields.append(fieldRow("tag", "Event", str(r, "eventTag")));
-    if (r.personal) personalRows(r, fields);
+    if (str(r, "eventTag") && !r.personal) fields.append(fieldRow("tag", "Event", str(r, "eventTag")));   // My cards: in the edit box
+    if (r.personal) { personalRows(r, fields); renderMineEdit(r); }
 
     const notes = str(r, "notes");
     $("d-notes").hidden = !notes;
@@ -1141,7 +1143,7 @@
 
     const by = str(r, "scannedBy");
     $("d-prov").textContent = r.personal
-      ? [when(scannedAt(r)) ? "Added to your library on " + when(scannedAt(r)) + "." : "", "Read only here — edit it in the cardlio app."].filter(Boolean).join(" ")
+      ? [when(scannedAt(r)) ? "Added to your library on " + when(scannedAt(r)) + "." : "", "Rating, event, notes and follow-up can be changed here; everything else in the cardlio app."].filter(Boolean).join(" ")
       : "Shared " + [by ? "by " + by : "", when(scannedAt(r)) ? "on " + when(scannedAt(r)) : ""].filter(Boolean).join(" ") + " into " + state.team.name + ".";
 
     renderDetailActions(r);
@@ -1151,16 +1153,14 @@
     $("d-close").focus();
   }
 
-  // A library card's own fields: industry, the lead (read only here), what
-  // you owe this person, keep-in-touch, and the stored translation.
+  // A library card's own fields: industry, interests, a done follow-up,
+  // keep-in-touch and the stored translation. (Rating, event and an owed
+  // follow-up are in the edit box below.)
   function personalRows(r, fields) {
     if (str(r, "industry")) fields.append(fieldRow("tag", "Industry", str(r, "industry")));
-    if (rating(r) || interests(r).length) {
-      fields.append(fieldRow(rating(r) || "tag", "Lead", [rating(r) ? RATINGS[rating(r)].label : "", interests(r).join(", ")].filter(Boolean).join(" · ")));
-    }
-    const owed = f(r, "followUpOwedAt"), done = f(r, "followUpDoneAt");
+    if (interests(r).length) fields.append(fieldRow("tag", "Interests", interests(r).join(", ")));
+    const done = f(r, "followUpDoneAt");
     if (done) fields.append(fieldRow("check", "Follow-up", "Done on " + when(done)));
-    else if (owed) fields.append(fieldRow("note", "Follow-up", "Owed since " + when(owed)));
     const months = f(r, "keepInTouchMonths");
     if (months) {
       const every = months === 12 ? "every year" : months === 1 ? "every month" : "every " + months + " months";
@@ -1172,6 +1172,105 @@
       fields.lastChild.querySelector(".fv > div").style.whiteSpace = "pre-line";
     }
   }
+
+  // ------------------------------------------------- edits to your own cards
+  //
+  // Four fields only (owner, 2026-10-05): the lead rating, the event tag, a
+  // note added as a new line, and "follow-up done". Each save changes those
+  // keys and CD_modifiedAt — nothing else — as a conflict-checked update:
+  // if the card changed on a device since this page read it, iCloud refuses
+  // and nothing is overwritten. Proven in the Development environment first
+  // (the app's --web-edit-check: the apps take the change in, keep every
+  // other field, and their own next edit of the card syncs normally).
+  // Names, phones, e-mails, address, photos, new and deleted cards stay in
+  // the apps.
+  async function updateLibraryCard(r, changes) {
+    const lib = state.team;
+    if (!lib || !lib.personal) throw new Error("Not a card of your library");
+    const now = Date.now();
+    const fields = { CD_modifiedAt: { value: now, type: "TIMESTAMP" } };
+    for (const [k, v] of Object.entries(changes)) fields["CD_" + k] = { value: v, type: typeof v === "number" ? "TIMESTAMP" : "STRING" };
+    const batch = lib.db.newRecordsBatch({ zoneID: lib.zoneID });
+    batch.update([{ recordType: LIB.RECORD_TYPE, recordName: r.recordName, recordChangeTag: r.recordChangeTag, fields }]);
+    const response = await batch.commit();
+    if (response.hasErrors) {
+      const err = response.errors[0];
+      const code = err.ckErrorCode || err.serverErrorCode || "";
+      if (/CONFLICT|ATOMIC|CHANGED/.test(code)) {
+        try { await syncPersonal(lib, false); } catch (e) { /* the reload is best effort */ }
+        renderTeam();
+        if (state.open && state.open.recordName === r.recordName) openDetail(state.open);
+        throw new Error("This card changed on one of your devices a moment ago. It has been reloaded — check it and try again.");
+      }
+      throw new Error("Could not save: " + errorText(err));
+    }
+    const saved = response.records && response.records[0];
+    for (const [k, v] of Object.entries(changes)) {
+      if (v === "" || v == null) delete r.fields[k]; else r.fields[k] = { value: v };
+    }
+    r.fields.modifiedAt = { value: now };
+    if (saved && saved.recordChangeTag) r.recordChangeTag = saved.recordChangeTag;
+  }
+
+  async function saveMine(r, changes, done) {
+    try {
+      await updateLibraryCard(r, changes);
+      toast(done);
+      renderTeam();
+      if (state.open === r) openDetail(r);
+    } catch (err) {
+      toast(err.message || errorText(err), true);
+    }
+  }
+
+  function renderMineEdit(r) {
+    const box = $("m-rating");
+    box.replaceChildren();
+    for (const v of ["hot", "warm", "cold"]) {
+      const b = el("button", "rate " + v);
+      b.type = "button";
+      b.append(icon(v), el("span", null, RATINGS[v].label));
+      b.setAttribute("aria-pressed", String(rating(r) === v));
+      b.addEventListener("click", () => saveMine(r, { leadRating: rating(r) === v ? "" : v }, rating(r) === v ? "Rating cleared" : "Rated " + RATINGS[v].label));
+      box.append(b);
+    }
+    const follow = $("m-follow");
+    follow.replaceChildren();
+    follow.hidden = !LIB.followUpOwed(r);
+    if (LIB.followUpOwed(r)) {
+      follow.append(el("span", null, "You owe a follow-up since " + when(f(r, "followUpOwedAt")) + "."));
+      const b = el("button", "btn");
+      b.type = "button";
+      b.append(icon("check"), el("span", null, "Mark done"));
+      b.addEventListener("click", () => saveMine(r, { followUpDoneAt: Date.now() }, "Follow-up marked done"));
+      follow.append(b);
+    }
+    $("m-event").value = str(r, "eventTag");
+    $("m-event-save").disabled = true;
+    $("m-note").value = "";
+    $("m-note-add").disabled = true;
+  }
+  $("m-event").addEventListener("input", () => {
+    $("m-event-save").disabled = !state.open || $("m-event").value.trim() === str(state.open, "eventTag");
+  });
+  $("m-event").addEventListener("keydown", (e) => { if (e.key === "Enter" && !$("m-event-save").disabled) { e.preventDefault(); $("m-event-save").click(); } });
+  $("m-event-save").addEventListener("click", () => {
+    const r = state.open;
+    if (!r || !r.personal) return;
+    const v = $("m-event").value.trim();
+    $("m-event-save").disabled = true;
+    saveMine(r, { eventTag: v }, v ? "Event saved" : "Event cleared");
+  });
+  $("m-note").addEventListener("input", () => { $("m-note-add").disabled = !$("m-note").value.trim(); });
+  $("m-note-add").addEventListener("click", () => {
+    const r = state.open;
+    const line = $("m-note").value.trim().replace(/\s*\n\s*/g, " ");
+    if (!r || !r.personal || !line) return;
+    $("m-note-add").disabled = true;
+    const before = str(r, "notes");
+    const added = when(Date.now()) + " · " + line;
+    saveMine(r, { notes: before ? before + "\n" + added : added }, "Note added");
+  });
 
   function renderDetailActions(r) {
     const actions = $("d-actions");
@@ -2403,7 +2502,7 @@
     e.preventDefault();
     dragDepth = 0;
     $("drop-hint").hidden = true;
-    if (readOnlyView()) { toast("My cards is read only here — open a team to add cards, or add them in the cardlio app", true); return; }
+    if (readOnlyView()) { toast("Cards are added to your library in the cardlio app — or open a team to add them there", true); return; }
     await importFiles([...e.dataTransfer.files]);
   });
 

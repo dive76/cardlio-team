@@ -14,7 +14,7 @@
 <meta name="theme-color" content="#4F46E5">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="assets/icon-192.png">
-<link rel="stylesheet" href="app.css?v=12">
+<link rel="stylesheet" href="app.css?v=13">
 </head>
 <body>
 
@@ -265,6 +265,18 @@
       </div>
       <div class="fields" id="d-fields"></div>
       <div class="notes" id="d-notes" hidden></div>
+      <div class="lead-box mine-only" id="d-mine-edit">
+        <div class="lead-label">Lead <span>your rating — saved to your iCloud, the apps follow</span></div>
+        <div class="lead-rate" id="m-rating" role="group" aria-label="Lead rating"></div>
+        <div class="mine-follow" id="m-follow" hidden></div>
+      </div>
+      <div class="team-notes mine-only">
+        <label for="m-event">Event <span>where you met</span></label>
+        <div class="inline-edit"><input id="m-event" maxlength="80" autocomplete="off" placeholder="e.g. Expo Singapore"><button class="btn" type="button" id="m-event-save" disabled>Save</button></div>
+        <label for="m-note">Add a note <span>added as a new line with today's date</span></label>
+        <textarea id="m-note" rows="2" maxlength="1000" placeholder="e.g. called, send the brochure"></textarea>
+        <div class="row"><button class="btn" type="button" id="m-note-add" disabled>Add note</button></div>
+      </div>
       <div class="lead-box team-only">
         <div class="lead-label">Lead <span>the team's rating — set here or in the cardlio app</span></div>
         <div class="lead-rate" id="d-rating" role="group" aria-label="Lead rating"></div>
@@ -438,6 +450,6 @@
 <script src="config.js?v=1"></script>
 <script src="https://cdn.apple-cloudkit.com/ck/2/cloudkit.js"></script>
 <script src="mycards.js?v=1"></script>
-<script src="app.js?v=17"></script>
+<script src="app.js?v=18"></script>
 </body>
 </html>

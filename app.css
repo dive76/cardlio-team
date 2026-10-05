@@ -661,3 +661,8 @@ body.mine.locked .pick, body.mine.locked .pick-cell, body.mine.locked .sel-hint 
 #mine-side .team-nav { margin-bottom: 14px; }
 .status.owed { background: var(--accent-soft); color: var(--accent); }
 .status.due { background: #fff3d6; color: #8a5a00; }
+.inline-edit { display: flex; gap: 8px; }
+.inline-edit input { flex: 1; min-width: 0; font: inherit; font-size: 14px; color: var(--ink); background: var(--bg-alt); border: 1px solid var(--line-strong); border-radius: 10px; padding: 7px 10px; }
+.inline-edit input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+.mine-follow { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; font-size: 13.5px; color: var(--ink-2); }
+@media (prefers-color-scheme: dark) { .inline-edit input { background: #1f1e2b; } }

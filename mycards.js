@@ -6,8 +6,8 @@
 // The apps store the library with SwiftData, mirrored by Core Data into
 // the zone "com.apple.coredata.cloudkit.zone": record type
 // CD_BusinessCard, one CD_<property> field per stored property. That
-// format is Apple's, not ours, so this page only ever READS it — a record
-// written by anything but Core Data could stop the user's whole sync.
+// format is Apple's, not ours: the page reads it, and changes only four
+// plain fields of an existing card (app.js, updateLibraryCard).
 //
 // Measured on the owner's library (2026-10-05, 564 cards): the two list
 // properties (emails, additionalPhones) arrive as BYTES holding an
