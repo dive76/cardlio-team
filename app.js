@@ -322,6 +322,19 @@
   const LIB = window.CardlioLibrary;
   const MINE_ID = "mine";
   let personal = null;
+  // For a console check when something looks wrong: __cardlioMine() returns
+  // counts and field NAMES only — never a card's contents.
+  const diag = { keys: {}, fetches: [], pollErrors: [] };
+  window.__cardlioMine = () => {
+    const lib = personal;
+    const photos = lib ? lib.records.map((r) => photoURL(r)) : [];
+    return {
+      cards: lib ? lib.records.length : null, records: lib ? lib.byName.size : null, pending: lib ? lib.pendingRecords.length : null,
+      photosInline: photos.filter((u) => u.startsWith("data:")).length, photosAsset: photos.filter((u) => u && !u.startsWith("data:")).length,
+      trimmed: lib ? lib.trimmed : null, unlocked: lib ? lib.unlocked : null, hasSyncToken: !!(lib && lib.syncToken),
+      visible: document.visibilityState, fetches: diag.fetches.slice(-10), pollErrors: diag.pollErrors.slice(-5), fieldsSeen: diag.keys
+    };
+  };
 
   async function libraryChanges(db, zoneID, syncToken) {
     const changed = [], deleted = [];
@@ -335,6 +348,10 @@
       for (const r of z.records || []) {
         if (r.deleted) deleted.push(r.recordName);
         else if (r.recordType === LIB.RECORD_TYPE) {
+          for (const [k, v] of Object.entries(r.fields || {})) {
+            const key = k + ":" + (v && v.type ? v.type : typeof (v && v.value)) + (v && v.value === "" ? ":empty" : "");
+            diag.keys[key] = (diag.keys[key] || 0) + 1;
+          }
           if (r.fields && (r.fields.CD_rawText || r.fields.CD_imageData)) trimmed = false;
           changed.push(r);
         }
@@ -349,7 +366,9 @@
   // new wait in pendingRecords behind the "N new cards" pill, as on a team.
   async function syncPersonal(lib, announce) {
     const first = lib.syncToken === undefined;
+    const t0 = Date.now();
     const { changed, deleted, syncToken, trimmed } = await libraryChanges(lib.db, lib.zoneID, lib.syncToken);
+    diag.fetches.push({ at: new Date().toLocaleTimeString(), ms: Date.now() - t0, incremental: !first, changed: changed.length, deleted: deleted.length });
     if (first) {
       lib.trimmed = trimmed;
       if (!trimmed) console.info("cardlio: iCloud ignored desiredKeys — My cards loaded every field (slower).");
@@ -1507,7 +1526,7 @@
     const team = state.team;
     if (!team || polling || (!force && document.visibilityState !== "visible") || $("claim-dialog").open || $("delete-dialog").open) return;
     polling = true;
-    if (team.personal) { try { await pollPersonal(team); } catch (e) { /* silent, like a team poll */ } finally { polling = false; } return; }
+    if (team.personal) { try { await pollPersonal(team); } catch (e) { diag.pollErrors.push(new Date().toLocaleTimeString() + " " + errorText(e)); } finally { polling = false; } return; }
     try {
       const fresh = (await zoneRecords(team.db, team.zoneID)).filter((x) => x.recordType === "TeamCard");
       const known = new Map(team.records.map((r) => [r.recordName, r]));
