@@ -21,7 +21,7 @@
       containerIdentifier: cfg.containerIdentifier,
       environment: cfg.environment,
       apiTokenAuth: {
-        apiToken: cfg.apiToken, persist: true,
+        apiToken: cfg.apiToken, persist: false,   // one-time page: keep the token in memory only (AUTH_PERSIST_ERROR in the owner's browser with persist: true)
         signInButton: { id: "apple-sign-in-button", theme: "white-with-outline" },
         signOutButton: { id: "apple-sign-out-button", theme: "black" }
       }
