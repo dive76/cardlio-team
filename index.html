@@ -14,7 +14,7 @@
 <meta name="theme-color" content="#4F46E5">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="assets/icon-192.png">
-<link rel="stylesheet" href="app.css?v=16">
+<link rel="stylesheet" href="app.css?v=17">
 </head>
 <body>
 
@@ -210,10 +210,15 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h14"/></svg>
             <span class="sr-only">List</span>
           </button>
+          <button type="button" data-view="stats" aria-pressed="false" title="Overview">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 20V11M12 20V5M19 20v-6"/></svg>
+            <span class="sr-only">Overview</span>
+          </button>
         </div>
       </div>
       <div class="active-filters" id="active-filters" hidden></div>
       <div class="chips" id="event-chips" hidden></div>
+      <section class="recap" id="event-recap" aria-label="Event recap" hidden></section>
       <section class="today mine-only" id="today" aria-label="Today" hidden>
         <div class="today-col" id="today-owed"></div>
         <div class="today-col" id="today-due"></div>
@@ -222,6 +227,7 @@
       <button class="new-pill" id="new-pill" type="button" hidden aria-live="polite"></button>
       <p class="result-line" id="result-line" aria-live="polite"></p>
       <ul class="grid" id="grid"></ul>
+      <section class="overview" id="overview" aria-label="Overview" hidden></section>
       <div class="list-wrap" id="list-wrap" hidden><table class="list" id="list"><thead></thead><tbody></tbody></table></div>
       <p class="fine sel-hint" id="sel-hint" hidden>Tick cards to claim, download or export just those. Shift-click ticks a range.</p>
       <div id="no-match" class="empty" hidden>
@@ -254,6 +260,7 @@
   <span class="spacer"></span>
   <button class="btn primary team-only" type="button" id="sel-claim">Claim</button>
   <button class="btn mine-only" type="button" id="sel-event">Set event…</button>
+  <button class="btn mine-only" type="button" id="sel-share">Share to team…</button>
   <label class="mine-only"><span class="sr-only">Rate the selected cards</span>
     <select class="select" id="sel-rate">
       <option value="">Rate…</option>
@@ -413,6 +420,21 @@
   </form>
 </dialog>
 
+<dialog id="share-dialog" class="small-dialog" aria-labelledby="sh-title">
+  <form method="dialog" id="share-form" autocomplete="off">
+    <h2 id="sh-title">Share to a team</h2>
+    <p id="sh-text"></p>
+    <label>Team<select class="select" id="sh-team"></select></label>
+    <label>Your name, as the team sees it<input id="sh-by" maxlength="60" autocomplete="name" required></label>
+    <p class="fine">The team gets a copy of each card's details — not the photo, which a browser cannot upload to iCloud. Cards the team already has are skipped. Your own cards stay as they are.</p>
+    <p class="join-error" id="sh-error" role="alert" hidden></p>
+    <div class="row">
+      <button class="btn" type="button" id="sh-cancel">Cancel</button>
+      <button class="btn primary" type="submit" id="sh-go">Share</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="locked-dialog" class="small-dialog" aria-labelledby="l-title">
   <form method="dialog">
     <h2 id="l-title">Downloads come with the unlock</h2>
@@ -551,6 +573,6 @@
 <script src="config.js?v=1"></script>
 <script src="https://cdn.apple-cloudkit.com/ck/2/cloudkit.js"></script>
 <script src="mycards.js?v=3"></script>
-<script src="app.js?v=21"></script>
+<script src="app.js?v=22"></script>
 </body>
 </html>

@@ -862,13 +862,16 @@
     document.querySelector(".toolbar").hidden = total === 0;
     $("no-match").hidden = !(total > 0 && list.length === 0);
     $("result-line").textContent = total ? (list.length === total ? plural(total, "card") : list.length + " of " + plural(total, "card")) : "";
-    const asList = state.view === "list";
-    grid.hidden = asList;
+    const asList = state.view === "list", asStats = state.view === "stats";
+    grid.hidden = asList || asStats;
     $("list-wrap").hidden = !asList || !list.length;
+    $("overview").hidden = !asStats || !list.length;
     // A ticked card that left the team (deleted in the app) leaves the selection.
     const alive = new Set(state.team.records.map((r) => r.recordName));
     for (const id of state.selected) if (!alive.has(id)) state.selected.delete(id);
-    if (asList) renderList(list);
+    renderRecap(list, asStats);
+    if (asStats) renderOverview(list);
+    else if (asList) renderList(list);
     else {
       // Newest first reads as time: Last 7 days / Last 30 days / Earlier,
       // headed only when the cards shown span more than one of them.
@@ -888,7 +891,7 @@
     }
     renderActiveFilters();
     renderToday();
-    $("sel-hint").hidden = !(list.length > 1 && !state.selected.size);
+    $("sel-hint").hidden = asStats || !(list.length > 1 && !state.selected.size);
     $("sel-hint").textContent = personal ? "Tick cards to rate, tag or download several at once. Shift-click ticks a range."
       : "Tick cards to claim, download or export just those. Shift-click ticks a range.";
     if (!personal && state.filter === "mine" && !myName() && total) $("no-match").querySelector("p").textContent = "Claim a card first — \"Mine\" shows the cards claimed under your name.";
@@ -976,12 +979,7 @@
     }
   }
   for (const b of document.querySelectorAll(".view-toggle button")) {
-    b.addEventListener("click", () => {
-      state.view = b.dataset.view;
-      storageSet("cardlio.team.view", state.view);
-      for (const x of document.querySelectorAll(".view-toggle button")) x.setAttribute("aria-pressed", String(x === b));
-      if (state.team) renderGrid();
-    });
+    b.addEventListener("click", () => { if (state.team) setView(b.dataset.view); });
     b.setAttribute("aria-pressed", String(b.dataset.view === state.view));
   }
 
@@ -1130,6 +1128,7 @@
     if (state.query.trim()) bits.push("search: " + state.query.trim());
     bits.push("printed " + new Date().toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }));
     sheet.append(el("p", "meta", bits.join(" · ")));
+    if (state.event && scope.records.length) sheet.append(el("p", "meta", recapFacts(scope.records).join(" · ")));
     const table = el("table"), thead = el("thead"), tbody = el("tbody");
     const hr = el("tr");
     const heads = personal ? ["", "Name", "Company", "Rating", "Contact", "Event", "Added", "Note"]
@@ -1402,6 +1401,231 @@
     const before = str(r, "notes");
     const added = when(Date.now()) + " · " + line;
     saveMine(r, { notes: before ? before + "\n" + added : added }, "Note added");
+  });
+
+  // ----------------------------------------------- overview (2026-10-06)
+  //
+  // The apps' Stats, on the web: everything computed in the browser from
+  // the cards shown (search and filters apply). One series per chart, in the
+  // one accent colour, every bar labelled — the lead split too: Hot and Warm
+  // are too close to tell apart by colour alone (checked with the dataviz
+  // validator), so the labels carry the identity. A row is a button: it
+  // filters to those cards and shows them.
+  function countBy(list, get) {
+    const m = new Map();
+    for (const r of list) {
+      const vals = [].concat(get(r)).map((v) => (v || "").trim()).filter(Boolean);
+      for (const v of vals) { const k = fold(v); const c = m.get(k) || { label: v, n: 0 }; c.n++; m.set(k, c); }
+    }
+    return [...m.values()].sort((a, b) => b.n - a.n || a.label.localeCompare(b.label));
+  }
+  function barPanel(title, rows, opts) {
+    const o = opts || {};
+    const panel = el("section", "ov-panel" + (o.wide ? " wide" : ""));
+    const head = el("div", "ov-head");
+    head.append(el("h2", null, title));
+    if (o.note) head.append(el("span", "ov-note", o.note));
+    panel.append(head);
+    if (!rows.length) { panel.append(el("p", "ov-empty", o.empty || "Nothing yet")); return panel; }
+    const max = Math.max(...rows.map((r) => r.n), 1);
+    const shown = rows.slice(0, o.limit || 8);
+    for (const r of shown) {
+      const row = el(r.pick ? "button" : "div", "bar-row");
+      if (r.pick) { row.type = "button"; row.title = plural(r.n, "card") + " — show them"; row.addEventListener("click", () => { r.pick(); setView("grid"); }); }
+      row.append(el("span", "lbl", r.label));
+      const track = el("span", "track");
+      const fill = el("i");
+      fill.style.width = Math.max(2, Math.round(100 * r.n / max)) + "%";
+      track.append(fill);
+      row.append(track, el("span", "val", String(r.n)));
+      panel.append(row);
+    }
+    if (rows.length > shown.length) panel.append(el("p", "ov-more", "and " + (rows.length - shown.length) + " more"));
+    return panel;
+  }
+  function monthPanel(list) {
+    const panel = el("section", "ov-panel wide");
+    const now = new Date();
+    const months = [];
+    for (let i = 11; i >= 0; i--) { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); months.push({ y: d.getFullYear(), m: d.getMonth(), n: 0 }); }
+    for (const r of list) {
+      const t = scannedAt(r); if (!t) continue;
+      const d = new Date(t);
+      const slot = months.find((x) => x.y === d.getFullYear() && x.m === d.getMonth());
+      if (slot) slot.n++;
+    }
+    const total = months.reduce((a, b) => a + b.n, 0), max = Math.max(...months.map((x) => x.n), 1);
+    const head = el("div", "ov-head");
+    head.append(el("h2", null, "Cards added"), el("span", "ov-note", plural(total, "card") + " in the last 12 months"));
+    panel.append(head);
+    const cols = el("div", "cols");
+    const fmt = new Intl.DateTimeFormat(undefined, { month: "short" });
+    for (const x of months) {
+      const c = el("div", "col");
+      c.title = plural(x.n, "card") + " · " + new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(new Date(x.y, x.m, 1));
+      const bar = el("div", "colbar");
+      const fill = el("i", x.n ? null : "zero");
+      fill.style.height = (x.n ? Math.max(4, Math.round(100 * x.n / max)) : 0) + "%";
+      bar.append(fill);
+      c.append(el("span", "cv", x.n ? String(x.n) : ""), bar, el("span", "cm", fmt.format(new Date(x.y, x.m, 1))));
+      cols.append(c);
+    }
+    panel.append(cols);
+    return panel;
+  }
+  function leadRows(list) {
+    const rows = ["hot", "warm", "cold"].map((k) => ({ label: RATINGS[k].label, n: list.filter((r) => rating(r) === k).length, pick: () => setRating(k) })).filter((x) => x.n);
+    const none = list.filter((r) => !rating(r)).length;
+    if (none) rows.push({ label: "Not rated", n: none });
+    return rows;
+  }
+  function renderOverview(list) {
+    const box = $("overview");
+    box.replaceChildren();
+    if (!list.length) return;
+    const personal = !!state.team.personal;
+    box.append(monthPanel(list));
+    box.append(barPanel("Lead rating", leadRows(list), { note: "how warm the leads are" }));
+    if (personal) {
+      const now = Date.now();
+      const rows = [
+        { label: "Follow-up owed", n: list.filter(LIB.followUpOwed).length, pick: () => setMFilter("owed") },
+        { label: "Follow-up done", n: list.filter((r) => !!f(r, "followUpDoneAt")).length },
+        { label: "Reconnect due", n: list.filter((r) => LIB.reconnectDue(r, now)).length, pick: () => setMFilter("reconnect") },
+        { label: "Keeping in touch", n: list.filter((r) => !!LIB.reconnectInfo(r)).length }
+      ].filter((x) => x.n);
+      box.append(barPanel("Following up", rows, { empty: "No follow-ups or keep-in-touch set yet" }));
+    } else {
+      const claimed = list.filter((r) => str(r, "claimedBy")).length;
+      box.append(barPanel("Claims", [{ label: "Unclaimed", n: list.length - claimed, pick: () => setFilter("open") }, { label: "Claimed", n: claimed, pick: () => setFilter("taken") }].filter((x) => x.n)));
+      box.append(barPanel("Shared by", countBy(list, (r) => str(r, "scannedBy"))));
+    }
+    const pick = (setter) => (row) => Object.assign(row, { pick: () => setter(row.label) });
+    box.append(barPanel("Countries", countBy(list, (r) => str(r, "country")).map(pick((v) => { state.country = v; $("country-filter").value = v; renderGrid(); }))));
+    box.append(barPanel("Industries", countBy(list, (r) => str(r, "industry")).map(pick((v) => { state.industry = v; $("industry-filter").value = v; renderGrid(); }))));
+    box.append(barPanel("Companies", countBy(list, (r) => str(r, "company")).map(pick((v) => { state.company = v; renderGrid(); }))));
+    box.append(barPanel("Events", countBy(list, (r) => str(r, "eventTag")).map(pick((v) => { state.event = v; renderTeam(); }))));
+  }
+  function setView(v) {
+    state.view = v;
+    storageSet("cardlio.team.view", v);
+    for (const x of document.querySelectorAll(".view-toggle button")) x.setAttribute("aria-pressed", String(x.dataset.view === v));
+    renderGrid();
+  }
+
+  // -------------------------------------------- event recap (2026-10-06)
+  //
+  // An event picked from the chips gets a short recap above its cards:
+  // how many, when, how warm, what is owed or claimed, where from — with
+  // Download and Print for the report after the fair.
+  function recapFacts(list) {
+    const personal = !!state.team.personal;
+    const stamps = list.map(scannedAt).filter(Boolean);
+    const span = stamps.length ? (() => { const a = when(Math.min(...stamps)), b = when(Math.max(...stamps)); return a === b ? a : a + " – " + b; })() : "";
+    const leads = ["hot", "warm", "cold"].map((k) => [k, list.filter((r) => rating(r) === k).length]).filter(([, n]) => n);
+    const facts = [plural(list.length, "card") + (span ? " · " + span : "")];
+    if (leads.length) facts.push(leads.map(([k, n]) => n + " " + RATINGS[k].label.toLowerCase()).join(" · ") + (list.length - leads.reduce((a, [, n]) => a + n, 0) ? " · " + (list.length - leads.reduce((a, [, n]) => a + n, 0)) + " not rated" : ""));
+    if (personal) {
+      const owed = list.filter(LIB.followUpOwed).length, done = list.filter((r) => !!f(r, "followUpDoneAt")).length;
+      if (owed || done) facts.push([owed ? owed + " follow-up" + (owed === 1 ? "" : "s") + " owed" : "", done ? done + " done" : ""].filter(Boolean).join(" · "));
+    } else {
+      const claimed = list.filter((r) => str(r, "claimedBy")).length;
+      facts.push((list.length - claimed) + " unclaimed · " + claimed + " claimed");
+    }
+    const countries = countBy(list, (r) => str(r, "country"));
+    if (countries.length) facts.push(countries.slice(0, 4).map((c) => c.label + " " + c.n).join(" · ") + (countries.length > 4 ? " · " + (countries.length - 4) + " more countries" : ""));
+    const companies = countBy(list, (r) => str(r, "company")).length;
+    if (companies) facts.push(plural(companies, "company") .replace("companys", "companies"));
+    return facts;
+  }
+  function renderRecap(list, asStats) {
+    const box = $("event-recap");
+    box.replaceChildren();
+    box.hidden = !state.event || asStats || !list.length;
+    if (box.hidden) return;
+    const head = el("div", "recap-head");
+    head.append(el("h2", null, state.event));
+    const btns = el("div", "recap-btns");
+    const ov = el("button", "btn small"); ov.type = "button"; ov.append(el("span", null, "Overview")); ov.addEventListener("click", () => setView("stats"));
+    const pr = el("button", "btn small"); pr.type = "button"; pr.append(el("span", null, "Print recap")); pr.addEventListener("click", () => { if (mayDownload()) printSheet(null, null); });
+    const dl = el("button", "btn small"); dl.type = "button"; dl.append(icon("download"), el("span", null, "Download")); dl.addEventListener("click", () => { closePops(); if (mayDownload()) { $("export-btn").scrollIntoView({ block: "center" }); setMenu(true); } });
+    btns.append(ov, pr, dl);
+    head.append(btns);
+    box.append(head);
+    const ul = el("ul", "recap-facts");
+    for (const t of recapFacts(list)) ul.append(el("li", null, t));
+    box.append(ul);
+  }
+
+  // ------------------------------------ share My cards to a team (2026-10-06)
+  //
+  // A copy of each selected card's details becomes a TeamCard in the chosen
+  // team (the same record the apps' Share with Team writes), without the
+  // photo: a browser cannot upload an asset to iCloud (2026-09-21). Cards
+  // the team already has (the duplicate rule) are skipped. My cards is not
+  // touched.
+  function teamFieldsFrom(r) {
+    const out = {};
+    const put = (k, v) => { if (v) out[k] = { value: v, type: "STRING" }; };
+    put("firstName", str(r, "firstName")); put("lastName", str(r, "lastName"));
+    put("title", str(r, "title")); put("company", str(r, "company"));
+    put("phone", str(r, "phone")); put("mobile", str(r, "mobile")); put("website", str(r, "website"));
+    put("street", [str(r, "building"), str(r, "street")].filter(Boolean).join(", "));
+    put("unit", str(r, "unit")); put("postalCode", str(r, "postalCode")); put("city", str(r, "city")); put("country", str(r, "country"));
+    put("eventTag", str(r, "eventTag")); put("leadRating", rating(r)); put("leadInterests", interests(r).join("\n"));
+    const extra = [str(r, "notes"),
+      str(r, "honorific") ? "Honorific: " + str(r, "honorific") : "",
+      str(r, "fax") ? "Fax: " + str(r, "fax") : "",
+      ...listOf(r, "additionalPhones").map((p) => "Phone: " + p),
+      str(r, "linkedin") ? "LinkedIn: " + str(r, "linkedin") : "",
+      str(r, "wechat") ? "WeChat: " + str(r, "wechat") : ""].filter(Boolean).join("\n");
+    put("notes", extra);
+    if (emails(r).length) out.emails = { value: emails(r), type: "STRING_LIST" };
+    return out;
+  }
+  let shareCards = [];
+  function openShare(cards) {
+    const teams = state.teams.filter((t) => !t.personal);
+    if (!teams.length) { toast("Join or create a team first — teams are created in the cardlio app", true); return; }
+    shareCards = cards;
+    const sel = $("sh-team");
+    sel.replaceChildren();
+    for (const t of teams) { const o = el("option", null, t.name + (t.owned ? "" : " (joined)")); o.value = t.id; sel.append(o); }
+    const last = storageGet("cardlio.team.shareTo");
+    if (teams.some((t) => t.id === last)) sel.value = last;
+    $("sh-by").value = myName();
+    $("sh-text").textContent = (cards.length === 1 ? displayName(cards[0]) : plural(cards.length, "card")) + " → a team.";
+    $("sh-error").hidden = true;
+    $("share-dialog").showModal();
+  }
+  $("sel-share").addEventListener("click", () => openShare(selectedRecords()));
+  $("sh-cancel").addEventListener("click", () => $("share-dialog").close());
+  $("share-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const team = state.teams.find((t) => t.id === $("sh-team").value);
+    const by = $("sh-by").value.trim();
+    if (!team || !by) return;
+    storageSet(NAME_KEY, by);
+    storageSet("cardlio.team.shareTo", team.id);
+    $("sh-go").disabled = true;
+    const known = new Set(team.records.flatMap(duplicateKeys));
+    let added = 0, skipped = 0, failed = 0, firstError = "";
+    for (const r of shareCards) {
+      if (duplicateKeys(r).some((k) => known.has(k))) { skipped++; continue; }
+      try {
+        await createCard(teamFieldsFrom(r), by, null, team);
+        duplicateKeys(r).forEach((k) => known.add(k));
+        added++;
+      } catch (err) { failed++; firstError = firstError || err.message || errorText(err); }
+    }
+    $("sh-go").disabled = false;
+    $("share-dialog").close();
+    renderTeamNav();
+    const bits = [];
+    if (added) bits.push("Shared " + plural(added, "card") + " to " + team.name);
+    if (skipped) bits.push(plural(skipped, "card") + " the team already had");
+    if (failed) bits.push(failed + " failed: " + firstError);
+    toast(bits.join(" · ") || "Nothing to share", !!failed);
   });
 
   // ------------------------------------- follow up from anywhere (2026-10-06)
@@ -1741,6 +1965,13 @@
         actions.append(w);
       }
       actions.append(link);
+      if (state.teams.some((t) => !t.personal)) {
+        const sh = el("button", "btn");
+        sh.type = "button";
+        sh.append(el("span", null, "Share to team"));
+        sh.addEventListener("click", () => openShare([r]));
+        actions.append(sh);
+      }
       return;
     }
     const claimedBy = str(r, "claimedBy");
@@ -2522,8 +2753,8 @@
   // `photo`, when given, is a Blob: CloudKit JS uploads a Blob field value
   // as an asset through saveRecords (a records batch cannot carry one).
   // If the upload is refused the card is saved again without the photo.
-  async function createCard(fields, by, photo) {
-    const team = state.team;
+  async function createCard(fields, by, photo, target) {
+    const team = target || state.team;
     const id = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())).toUpperCase();
     const base = {
       cardID: { value: id, type: "STRING" },
