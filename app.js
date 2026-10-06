@@ -843,7 +843,7 @@
     });
     const byText = (get) => (a, b) => get(a).localeCompare(get(b), undefined, { sensitivity: "base" });
     if (state.sort === "name") list.sort(byText((r) => str(r, "lastName") || displayName(r)));
-    else if (state.sort === "company") list.sort(byText((r) => str(r, "company") || "~"));
+    else if (state.sort === "company") list.sort((a, b) => byText((r) => str(r, "company") || "~")(a, b) || byText((r) => str(r, "lastName") || displayName(r))(a, b));
     else if (state.sort === "event") list.sort(byText((r) => str(r, "eventTag") || "~"));
     else if (state.sort === "by") list.sort(byText((r) => str(r, "scannedBy") || "~"));
     else if (state.sort === "rating") list.sort((a, b) => ((RATINGS[rating(b)] || {}).rank || 0) - ((RATINGS[rating(a)] || {}).rank || 0) || scannedAt(b) - scannedAt(a));
@@ -876,14 +876,18 @@
       // Newest first reads as time: Last 7 days / Last 30 days / Earlier,
       // headed only when the cards shown span more than one of them.
       const day = 86400000, now = Date.now();
-      const bucket = (r) => { const age = now - scannedAt(r); return age < 7 * day ? "Last 7 days" : age < 30 * day ? "Last 30 days" : "Earlier"; };
-      const grouped = state.sort === "new" && new Set(list.map(bucket)).size > 1;
+      // Sorted by company or event, the same headings group by that value.
+      const bucket = state.sort === "company" ? (r) => str(r, "company") || "No company"
+        : state.sort === "event" ? (r) => str(r, "eventTag") || "No event"
+        : (r) => { const age = now - scannedAt(r); return age < 7 * day ? "Last 7 days" : age < 30 * day ? "Last 30 days" : "Earlier"; };
+      const grouped = ["new", "company", "event"].includes(state.sort) && new Set(list.map(bucket)).size > 1;
       let last = "";
       list.forEach((r, i) => {
         if (grouped && bucket(r) !== last) {
           last = bucket(r);
           const head = el("li", "group-head");
-          head.append(el("h2", null, last), el("span", null, plural(list.filter((x) => bucket(x) === last).length, "card")));
+          const n = list.filter((x) => bucket(x) === last).length;
+          head.append(el("h2", null, last), el("span", null, state.sort === "company" ? (n === 1 ? "1 person" : n + " people") : plural(n, "card")));
           grid.append(head);
         }
         const li = tile(r); li.style.setProperty("--i", Math.min(i, 24)); grid.append(li);
@@ -1261,6 +1265,28 @@
       dupe.append(". Claim one; the team keeps both.");
     }
 
+    // Everyone else you know at this company (team: on this team).
+    const also = $("d-also");
+    also.replaceChildren();
+    const co = fold(str(r, "company"));
+    const mates = co ? state.team.records.filter((x) => x !== r && fold(str(x, "company")) === co) : [];
+    also.hidden = !mates.length;
+    if (mates.length) {
+      also.append("Also at " + str(r, "company") + ": ");
+      mates.slice(0, 5).forEach((o, i) => {
+        if (i) also.append(", ");
+        const b = el("button", null, displayName(o));
+        b.type = "button";
+        b.addEventListener("click", () => openDetail(o));
+        also.append(b);
+      });
+      if (mates.length > 5) also.append(" and " + (mates.length - 5) + " more");
+      const all = el("button", "all", "Show all " + (mates.length + 1));
+      all.type = "button";
+      all.addEventListener("click", () => { $("detail").close(); state.company = str(r, "company"); setView(state.view === "stats" ? "grid" : state.view); });
+      also.append(" · ", all);
+    }
+
     const by = str(r, "scannedBy");
     $("d-prov").textContent = r.personal
       ? [when(scannedAt(r)) ? "Added to your library on " + when(scannedAt(r)) + "." : "", "Rating, event, notes and follow-up can be changed here; everything else in the cardlio app."].filter(Boolean).join(" ")
@@ -1296,9 +1322,15 @@
 
   // ------------------------------------------------- edits to your own cards
   //
-  // Five fields only (owner, 2026-10-05/06): the lead rating, the event tag,
-  // a note added as a new line, "follow-up done" and "I was in touch"
-  // (lastContactAt — the fifth, proven in Development on 2026-10-06). Each save changes those
+  // The fields the web may change (owner, 2026-10-05/06), each proven in
+  // Development first with the app's --web-edit-check: lead rating, event,
+  // notes (a dated line, or the whole text), follow-up done, "I was in
+  // touch" (lastContactAt), "I owe a follow-up" (only on a card with no
+  // follow-up yet — "Owe again" must CLEAR the done date, which stays in
+  // the app), the keep-in-touch cadence (INT64), interests, title, company,
+  // website, LinkedIn, WeChat and industry. Never names, numbers, e-mails,
+  // the address or photos: the app normalises those (phone format, Apple
+  // Maps check) and Caller ID / contact sync depend on it. Each save changes those
   // keys and CD_modifiedAt — nothing else — as a conflict-checked update:
   // if the card changed on a device since this page read it, iCloud refuses
   // and nothing is overwritten. Proven in the Development environment first
@@ -1311,7 +1343,8 @@
     if (!lib || !lib.personal) throw new Error("Not a card of your library");
     const now = Date.now();
     const fields = { CD_modifiedAt: { value: now, type: "TIMESTAMP" } };
-    for (const [k, v] of Object.entries(changes)) fields["CD_" + k] = { value: v, type: typeof v === "number" ? "TIMESTAMP" : "STRING" };
+    const isInt = (k) => k === "keepInTouchMonths";
+    for (const [k, v] of Object.entries(changes)) fields["CD_" + k] = { value: v, type: typeof v === "number" ? (isInt(k) ? "INT64" : "TIMESTAMP") : "STRING" };
     const batch = lib.db.newRecordsBatch({ zoneID: lib.zoneID });
     batch.update([{ recordType: LIB.RECORD_TYPE, recordName: r.recordName, recordChangeTag: r.recordChangeTag, fields }]);
     const response = await batch.commit();
@@ -1329,7 +1362,7 @@
     }
     const saved = response.records && response.records[0];
     for (const [k, v] of Object.entries(changes)) {
-      if (v === "" || v == null) delete r.fields[k]; else r.fields[k] = { value: v };
+      if (v === "" || v == null || (isInt(k) && !v)) delete r.fields[k]; else r.fields[k] = { value: v };
     }
     r.fields.modifiedAt = { value: now };
     if (saved && saved.recordChangeTag) r.recordChangeTag = saved.recordChangeTag;
@@ -1371,16 +1404,76 @@
       follow.append(row);
     };
     if (owed) line("You owe a follow-up since " + when(f(r, "followUpOwedAt")) + ".", "followUp", "Mark done", { followUpDoneAt: Date.now() }, "Follow-up marked done");
+    else {
+      const done = f(r, "followUpDoneAt");
+      const row = el("div", "follow-line");
+      if (done) row.append(el("span", "what", "Followed up on " + when(done) + ". To owe them another, use Owe again in the app."));
+      else {
+        row.append(el("span", "what", "No follow-up marked."));
+        const b = el("button", "btn small");
+        b.type = "button";
+        b.append(el("span", null, "I owe a follow-up"));
+        b.addEventListener("click", () => saveMine(r, { followUpOwedAt: Date.now() }, "Follow-up marked as owed"));
+        const btns = el("span", "btns");
+        btns.append(b);
+        row.append(btns);
+      }
+      follow.append(row);
+      follow.hidden = false;
+    }
     if (info) {
       const due = LIB.reconnectDue(r);
       line("Keep in touch " + everyMonths(info.months) + " · " + (info.fromContact ? "last in touch " : "met ") + when(info.last) + " · " + (due ? "due now" : "next on " + when(info.dueOn)) + ".",
         "reconnect", "I was in touch", { lastContactAt: Date.now() }, "Marked as in touch today");
     }
+    $("m-kit").value = String(f(r, "keepInTouchMonths") || 0);
+    if (!$("m-kit").value) { const o = el("option", null, "Every " + f(r, "keepInTouchMonths") + " months"); o.value = String(f(r, "keepInTouchMonths")); $("m-kit").append(o); $("m-kit").value = o.value; }
+    fillDetails(r);
     $("m-event").value = str(r, "eventTag");
     $("m-event-save").disabled = true;
     $("m-note").value = "";
     $("m-note-add").disabled = true;
   }
+  // -- more fields (2026-10-06): the cadence and the details editor
+  $("m-kit").addEventListener("change", () => {
+    const r = state.open;
+    if (!r || !r.personal) return;
+    const n = Number($("m-kit").value) || 0;
+    saveMine(r, { keepInTouchMonths: n }, n ? "Keep in touch " + everyMonths(n) : "Keep in touch turned off");
+  });
+  const DETAIL_FIELDS = [["m-title", "title"], ["m-company", "company"], ["m-industry", "industry"], ["m-website", "website"], ["m-linkedin", "linkedin"], ["m-wechat", "wechat"], ["m-notes", "notes"]];
+  const normInterests = (text) => {
+    const seen = new Set(), out = [];
+    for (const t of text.split(/[\n,]/).map((x) => x.trim()).filter(Boolean)) { const k = t.toLowerCase(); if (!seen.has(k)) { seen.add(k); out.push(t); } }
+    return out.join("\n");
+  };
+  function detailChanges(r) {
+    const ch = {};
+    for (const [id, k] of DETAIL_FIELDS) { const v = $(id).value.trim(); if (v !== str(r, k)) ch[k] = v; }
+    const it = normInterests($("m-interests").value);
+    if (it !== interests(r).join("\n")) ch.leadInterests = it;
+    return ch;
+  }
+  function fillDetails(r) {
+    for (const [id, k] of DETAIL_FIELDS) $(id).value = str(r, k);
+    $("m-interests").value = interests(r).join("\n");
+    const dl = $("m-industries");
+    dl.replaceChildren();
+    for (const v of [...new Set(state.team.records.map((x) => str(x, "industry")).filter(Boolean))].sort()) { const o = document.createElement("option"); o.value = v; dl.append(o); }
+    $("m-details-save").disabled = true;
+  }
+  for (const [id] of DETAIL_FIELDS.concat([["m-interests"]])) {
+    $(id).addEventListener("input", () => { $("m-details-save").disabled = !state.open || !Object.keys(detailChanges(state.open)).length; });
+  }
+  $("m-details-save").addEventListener("click", () => {
+    const r = state.open;
+    if (!r || !r.personal) return;
+    const ch = detailChanges(r);
+    if (!Object.keys(ch).length) return;
+    $("m-details-save").disabled = true;
+    saveMine(r, ch, "Saved — " + Object.keys(ch).length + (Object.keys(ch).length === 1 ? " field" : " fields") + " changed");
+  });
+
   $("m-event").addEventListener("input", () => {
     $("m-event-save").disabled = !state.open || $("m-event").value.trim() === str(state.open, "eventTag");
   });

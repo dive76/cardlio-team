@@ -14,7 +14,7 @@
 <meta name="theme-color" content="#4F46E5">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="assets/icon-192.png">
-<link rel="stylesheet" href="app.css?v=17">
+<link rel="stylesheet" href="app.css?v=18">
 </head>
 <body>
 
@@ -322,6 +322,14 @@
       <div class="lead-box mine-only" id="d-mine-edit">
         <div class="lead-label">Lead <span>your rating — saved to your iCloud, the apps follow</span></div>
         <div class="lead-rate" id="m-rating" role="group" aria-label="Lead rating"></div>
+        <label class="kit">Keep in touch
+          <select class="select" id="m-kit">
+            <option value="0">Off</option>
+            <option value="3">Every 3 months</option>
+            <option value="6">Every 6 months</option>
+            <option value="12">Every year</option>
+          </select>
+        </label>
         <div class="mine-follow" id="m-follow" hidden></div>
       </div>
       <div class="team-notes mine-only">
@@ -331,6 +339,22 @@
         <textarea id="m-note" rows="2" maxlength="1000" placeholder="e.g. called, send the brochure"></textarea>
         <div class="row"><button class="btn" type="button" id="m-note-add" disabled>Add note</button></div>
       </div>
+      <details class="mine-details mine-only" id="m-details">
+        <summary>Edit details <span>title, company, links, interests, notes</span></summary>
+        <div class="form-grid">
+          <label>Title<input id="m-title" maxlength="200" autocomplete="off"></label>
+          <label>Company<input id="m-company" maxlength="200" autocomplete="off"></label>
+          <label>Industry<input id="m-industry" list="m-industries" maxlength="80" autocomplete="off"></label>
+          <label>Website<input id="m-website" maxlength="300" autocomplete="off" spellcheck="false"></label>
+          <label>LinkedIn<input id="m-linkedin" maxlength="300" autocomplete="off" spellcheck="false"></label>
+          <label>WeChat<input id="m-wechat" maxlength="100" autocomplete="off" spellcheck="false"></label>
+          <label class="wide">Interests <small>one per line</small><textarea id="m-interests" rows="2" maxlength="1000"></textarea></label>
+          <label class="wide">Notes<textarea id="m-notes" rows="5" maxlength="8000"></textarea></label>
+        </div>
+        <datalist id="m-industries"></datalist>
+        <p class="fine">Names, numbers, e-mails and the address are edited in the cardlio app.</p>
+        <div class="row"><button class="btn primary" type="button" id="m-details-save" disabled>Save changes</button></div>
+      </details>
       <div class="lead-box team-only">
         <div class="lead-label">Lead <span>the team's rating — set here or in the cardlio app</span></div>
         <div class="lead-rate" id="d-rating" role="group" aria-label="Lead rating"></div>
@@ -344,6 +368,7 @@
         <div class="row"><button class="btn" type="button" id="d-team-notes-save" disabled>Save note</button></div>
       </div>
       <div class="dupe-note" id="d-dupe" hidden></div>
+      <div class="also-at" id="d-also" hidden></div>
       <p class="provenance" id="d-prov"></p>
     </div>
   </div>
@@ -573,6 +598,6 @@
 <script src="config.js?v=1"></script>
 <script src="https://cdn.apple-cloudkit.com/ck/2/cloudkit.js"></script>
 <script src="mycards.js?v=3"></script>
-<script src="app.js?v=22"></script>
+<script src="app.js?v=23"></script>
 </body>
 </html>

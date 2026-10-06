@@ -937,3 +937,18 @@ button.bar-row:hover, button.bar-row:focus-visible { background: var(--bg-sunken
   .cols { gap: 4px; height: 130px; }
   .col .cv { font-size: 10px; }
 }
+
+/* ================= 2026-10-06: more web-editable fields · company view ================= */
+.kit { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.kit .select { height: 34px; font-size: 13.5px; font-weight: 500; }
+.mine-details { border: 1px solid var(--line); border-radius: 12px; padding: 0 14px; }
+.mine-details > summary { cursor: pointer; padding: 12px 0; font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); list-style-position: inside; }
+.mine-details > summary span { text-transform: none; letter-spacing: 0; font-weight: 400; margin-left: 6px; }
+.mine-details[open] { padding-bottom: 14px; }
+.mine-details .form-grid label { font-size: 12.5px; font-weight: 600; color: var(--muted); display: grid; gap: 4px; }
+.mine-details .form-grid label small { font-weight: 400; }
+.mine-details .fine { margin: 10px 0 6px; }
+.mine-details .row { display: flex; justify-content: flex-end; }
+.also-at { font-size: 13.5px; color: var(--ink-2); background: var(--bg-alt); border-radius: 10px; padding: 10px 12px; }
+.also-at button { font: inherit; font-weight: 600; color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; }
+.also-at button:hover { text-decoration: underline; }
