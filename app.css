@@ -965,3 +965,33 @@ button.bar-row:hover, button.bar-row:focus-visible { background: var(--bg-sunken
 .map-pick li:first-child .map-pick-row { border-top: 0; }
 .map-pick-row span { color: var(--muted, inherit); font-size: 13px; }
 @media (max-width: 640px) { .map { height: 62vh; min-height: 300px; } }
+
+/* ------------------- trip planner, meeting brief, QR (2026-10-06) */
+.map-bar { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+.brief-dialog { width: min(560px, calc(100vw - 32px)); height: fit-content; padding: 24px; }
+.brief-dialog .row, .qr-dialog .row { margin-top: 16px; }
+.brief { max-height: min(70vh, 640px); overflow: auto; padding-right: 4px; }
+.brief .b-name { margin: 0; font-family: var(--font-display); font-size: 24px; letter-spacing: -0.01em; }
+.brief .b-role { margin: 4px 0 0; color: var(--ink-2); }
+.brief .b-sub { margin: 2px 0 0; color: var(--muted); font-size: 13.5px; }
+.b-facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 14px 0 0; padding: 12px 0 0; border-top: 1px solid var(--line); font-size: 14px; }
+.b-facts dt { color: var(--muted); }
+.b-facts dd { margin: 0; overflow-wrap: anywhere; }
+.brief h3 { margin: 16px 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.b-notes { margin: 0; white-space: pre-wrap; font-size: 14px; }
+.b-also { margin: 0; padding-left: 18px; font-size: 14px; }
+.qr-dialog { width: min(360px, calc(100vw - 32px)); height: fit-content; padding: 24px; text-align: center; }
+.qr-dialog p { margin: 6px 0; }
+.qr-dialog .row { justify-content: center; }
+.qr-box { display: inline-block; padding: 8px; background: #fff; border-radius: 12px; margin: 6px 0 4px; }
+.qr-box canvas { display: block; image-rendering: pixelated; }
+@media print {
+  .print-sheet .b-name { font: 700 20pt/1.1 var(--font-display), Helvetica, Arial, sans-serif; margin: 0 0 1mm; }
+  .print-sheet .b-role, .print-sheet .b-sub { margin: 0 0 1mm; color: #333; }
+  .print-sheet .b-facts { display: grid; grid-template-columns: max-content 1fr; gap: 1.5mm 5mm; margin: 4mm 0 0; padding-top: 3mm; border-top: 0.5pt solid #999; }
+  .print-sheet .b-facts dt { color: #555; }
+  .print-sheet .b-facts dd { margin: 0; }
+  .print-sheet h3 { font-size: 9pt; text-transform: uppercase; letter-spacing: 0.04em; color: #555; margin: 5mm 0 1mm; }
+  .print-sheet .b-notes { white-space: pre-wrap; margin: 0; }
+  .print-sheet .b-also { margin: 0; padding-left: 5mm; }
+}

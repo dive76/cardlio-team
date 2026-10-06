@@ -2,8 +2,8 @@
 // shell opens offline. Only same-origin shell files are cached; every
 // iCloud call (apple-cloudkit.com, icloud.com) and every Apple Maps
 // request (apple-mapkit.com, ls.apple.com) goes to the network.
-const CACHE = "cardlio-team-v10";
-const SHELL = ["/", "/index.html", "/app.css?v=19", "/app.js?v=24", "/mycards.js?v=4", "/config.js?v=2", "/manifest.webmanifest", "/assets/icon-192.png", "/assets/icon-512.png"];
+const CACHE = "cardlio-team-v11";
+const SHELL = ["/", "/index.html", "/app.css?v=20", "/app.js?v=25", "/mycards.js?v=4", "/config.js?v=2", "/manifest.webmanifest", "/assets/icon-192.png", "/assets/icon-512.png"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

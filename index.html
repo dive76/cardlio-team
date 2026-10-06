@@ -14,7 +14,7 @@
 <meta name="theme-color" content="#4F46E5">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="assets/icon-192.png">
-<link rel="stylesheet" href="app.css?v=19">
+<link rel="stylesheet" href="app.css?v=20">
 </head>
 <body>
 
@@ -233,6 +233,9 @@
       <ul class="grid" id="grid"></ul>
       <section class="overview" id="overview" aria-label="Overview" hidden></section>
       <section class="map-view" id="map-view" aria-label="Map" hidden>
+        <div class="map-bar" id="map-bar" hidden>
+          <button class="btn small" type="button" id="map-area" title="List the cards in the part of the map you see — for a trip">Cards in this area</button>
+        </div>
         <div class="map" id="map"></div>
         <div class="map-pick" id="map-pick" hidden></div>
         <p class="fine map-note" id="map-note" aria-live="polite"></p>
@@ -469,6 +472,22 @@
   </form>
 </dialog>
 
+<dialog id="brief-dialog" class="small-dialog brief-dialog" aria-labelledby="b-title">
+  <div class="brief" id="brief-body"></div>
+  <div class="row">
+    <button class="btn" type="button" id="b-close">Close</button>
+    <button class="btn primary" type="button" id="b-print">Print</button>
+  </div>
+</dialog>
+
+<dialog id="qr-dialog" class="small-dialog qr-dialog" aria-labelledby="q-title">
+  <h2 id="q-title">Scan with a phone</h2>
+  <p id="q-text"></p>
+  <div class="qr-box"><canvas id="q-canvas" role="img"></canvas></div>
+  <p class="fine">Point the phone&rsquo;s camera at the code and tap the contact it offers. The code holds the name, company, title, one email, the phone numbers and the website &mdash; no photo, address or notes. It is made in this page; nothing is sent anywhere.</p>
+  <div class="row"><button class="btn primary" type="button" id="q-done">Done</button></div>
+</dialog>
+
 <dialog id="locked-dialog" class="small-dialog" aria-labelledby="l-title">
   <form method="dialog">
     <h2 id="l-title">Downloads come with the unlock</h2>
@@ -607,6 +626,6 @@
 <script src="config.js?v=2"></script>
 <script src="https://cdn.apple-cloudkit.com/ck/2/cloudkit.js"></script>
 <script src="mycards.js?v=4"></script>
-<script src="app.js?v=24"></script>
+<script src="app.js?v=25"></script>
 </body>
 </html>

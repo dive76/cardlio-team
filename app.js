@@ -47,7 +47,8 @@
     country: "",
     industry: "",
     company: "",    // the app's search tokens (Company: …, Interest: …), picked from the suggestions
-    interest: ""
+    interest: "",
+    area: null      // a map area picked with "Cards in this area": { lat0, lat1, lon, half, label }
   };
   // A stable colour per person, for the avatars.
   function personHue(name) { let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
@@ -569,7 +570,7 @@
   function selectTeam(team) {
     if (state.team !== team) state.selected.clear();
     // Values belong to one library: a team's countries are not My cards'.
-    if (!state.team || state.team.id !== team.id) { state.country = state.industry = state.company = state.interest = ""; }
+    if (!state.team || state.team.id !== team.id) { state.country = state.industry = state.company = state.interest = ""; state.area = null; }
     state.team = team;
     state.event = "";
     $("new-pill").hidden = !(team.pendingRecords && team.pendingRecords.length);
@@ -635,6 +636,7 @@
     if (state.country) out.push({ text: "Country: " + state.country, clear: () => { state.country = ""; $("country-filter").value = ""; renderGrid(); } });
     if (state.industry) out.push({ text: "Industry: " + state.industry, clear: () => { state.industry = ""; $("industry-filter").value = ""; renderGrid(); } });
     if (state.interest) out.push({ text: "Interest: " + state.interest, clear: () => { state.interest = ""; renderGrid(); } });
+    if (state.area) out.push({ text: state.area.label, clear: () => { state.area = null; renderGrid(); } });
     if (state.rating) out.push({ text: RATINGS[state.rating].label + " leads", clear: () => setRating("") });
     return out;
   }
@@ -829,6 +831,7 @@
     if (state.interest && !interests(r).some((i) => same(i, state.interest))) return false;
     if (state.rating && rating(r) !== state.rating) return false;
     if (state.event && str(r, "eventTag") !== state.event) return false;
+    if (state.area && !(hasPlace(r) && inArea(state.area, r))) return false;
     return true;
   }
 
@@ -1125,6 +1128,12 @@
     const scope = printScope || { records: visibleRecords(), label: null };
     const sheet = $("print-sheet");
     sheet.replaceChildren();
+    if (scope.brief) {   // one person's meeting brief
+      if (!downloadsAllowed()) { sheet.append(el("p", "meta", "Printing your cards comes with the cardlio unlock, the same one purchase as in the app.")); return; }
+      fillBrief(sheet, scope.brief, "h1");
+      sheet.append(el("p", "foot", "team.cardlio.app · " + (scope.brief.personal ? "My cards" : state.team.name) + " · printed " + new Date().toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })));
+      return;
+    }
     sheet.append(el("h1", null, state.team.name));
     if (!downloadsAllowed()) {   // the browser's own Print command, while locked
       sheet.append(el("p", "meta", "Printing your cards comes with the cardlio unlock, the same one purchase as in the app."));
@@ -1135,6 +1144,7 @@
       : (scope.records.length === state.team.records.length ? plural(scope.records.length, "card") : scope.records.length + " of " + plural(state.team.records.length, "card") + " (filtered)");
     const bits = [what];
     if (state.event) bits.push(state.event);
+    if (state.area) bits.push(state.area.label);
     if (state.query.trim()) bits.push("search: " + state.query.trim());
     bits.push("printed " + new Date().toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }));
     sheet.append(el("p", "meta", bits.join(" · ")));
@@ -1657,6 +1667,7 @@
   }
   function mapProblem(text) {
     $("map").hidden = true;
+    $("map-bar").hidden = true;
     $("map-pick").hidden = true;
     $("map-note").textContent = text;
     $("map-view").classList.add("problem");
@@ -1715,6 +1726,7 @@
       });
       map.addEventListener("region-change-start", () => { $("map-pick").hidden = true; });
     }
+    $("map-bar").hidden = false;
     map.removeAnnotations(map.annotations);
     const anns = placed.map((r) => {
       const name = displayName(r), company = str(r, "company");
@@ -1749,6 +1761,171 @@
     box.append(ul);
     box.hidden = false;
   }
+  // Trip planner (2026-10-06): "Cards in this area" turns the part of the
+  // map in view into a filter — "Around Oslo" — so the list, print, the
+  // selection bar and every export work on the people there.
+  function inArea(a, r) {
+    const lat = f(r, "latitude"), lon = f(r, "longitude");
+    const dLon = ((lon - a.lon + 540) % 360) - 180;   // across the date line too
+    return lat >= a.lat0 && lat <= a.lat1 && Math.abs(dLon) <= a.half;
+  }
+  function areaLabel(hits) {
+    const top = (get) => {
+      const n = new Map();
+      for (const r of hits) { const v = get(r); if (v) n.set(v, (n.get(v) || 0) + 1); }
+      const best = [...n.entries()].sort((a, b) => b[1] - a[1])[0];
+      return best && best[1] * 2 > hits.length ? best[0] : "";
+    };
+    const city = top((r) => str(r, "city")), country = top((r) => str(r, "country"));
+    return city ? "Around " + city : country ? "In " + country : "In the map area";
+  }
+  $("map-area").addEventListener("click", () => {
+    const m = mapState.map;
+    if (!m) return;
+    const reg = m.region, c = reg.center, sp = reg.span;
+    const area = { lat0: c.latitude - sp.latitudeDelta / 2, lat1: c.latitude + sp.latitudeDelta / 2, lon: c.longitude, half: Math.min(180, sp.longitudeDelta / 2) };
+    const hits = state.team.records.filter((r) => hasPlace(r) && inArea(area, r));
+    if (!hits.length) { toast("No cards in this part of the map — zoom out or move the map."); return; }
+    area.label = areaLabel(hits);
+    state.area = area;
+    setView("list");
+    const n = visibleRecords().length;
+    toast(plural(n, "card") + " " + area.label.replace(/^A/, "a").replace(/^In /, "in "));
+  });
+
+  // Meeting brief (2026-10-06): one page to read before a call or a
+  // visit — who, where you met, how warm, what is owed, the notes, and
+  // the others you know there. On screen for everyone; printing follows
+  // the download rule (the unlock, on My cards).
+  function briefButton(r) {
+    const b = el("button", "btn");
+    b.type = "button";
+    b.append(el("span", null, "Prepare"));
+    b.title = "A one-page brief before a call or a visit";
+    b.addEventListener("click", () => openBrief(r));
+    return b;
+  }
+  function fillBrief(box, r, h) {
+    const name = el(h, "b-name", displayName(r));
+    if (h === "h2") name.id = "b-title";
+    box.append(name);
+    const role = [str(r, "title"), str(r, "company")].filter(Boolean).join(" · ");
+    if (role) box.append(el("p", "b-role", role));
+    const tr = [str(r, "translatedTitle"), str(r, "translatedCompany")].filter(Boolean).join(" · ");
+    if (tr) box.append(el("p", "b-sub", tr));
+    const place = [str(r, "city"), str(r, "country")].filter(Boolean).join(", ");
+    if (place) box.append(el("p", "b-sub", place));
+    const dl = el("dl", "b-facts");
+    const row = (k, v) => { if (!v) return; dl.append(el("dt", null, k), el("dd", null, v)); };
+    row("Reach", [emails(r)[0], str(r, "mobile"), str(r, "phone"), str(r, "website")].filter(Boolean).join("  ·  "));
+    if (r.personal) {
+      row("Met", [str(r, "eventTag"), when(scannedAt(r)) ? "added " + when(scannedAt(r)) : ""].filter(Boolean).join(" · "));
+    } else {
+      row("Shared", [str(r, "scannedBy") ? "by " + str(r, "scannedBy") : "", when(scannedAt(r)) ? "on " + when(scannedAt(r)) : "", str(r, "eventTag")].filter(Boolean).join(" · "));
+      row("Claimed", str(r, "claimedBy"));
+    }
+    const rt = rating(r);
+    row("Lead", [rt ? RATINGS[rt].label : "", interests(r).join(", ")].filter(Boolean).join(" — "));
+    if (r.personal) {
+      const owed = f(r, "followUpOwedAt"), done = f(r, "followUpDoneAt");
+      row("Follow-up", LIB.followUpOwed(r) ? "You owe one, since " + when(owed) : done ? "Done " + when(done) : "");
+      const i = LIB.reconnectInfo(r);
+      if (i) row("In touch", everyMonths(i.months) + " · " + (i.fromContact ? "last in touch " : "met ") + when(i.last) + " · next " + when(i.dueOn));
+      else if (f(r, "lastContactAt")) row("In touch", "Last in touch " + when(f(r, "lastContactAt")));
+    }
+    if (dl.childNodes.length) box.append(dl);
+    const notes = r.personal ? str(r, "notes") : str(r, "teamNotes");
+    if (notes) { box.append(el("h3", null, r.personal ? "Notes" : "Team notes")); box.append(el("p", "b-notes", notes)); }
+    const co = fold(str(r, "company"));
+    const mates = co ? state.team.records.filter((x) => x !== r && fold(str(x, "company")) === co) : [];
+    if (mates.length) {
+      box.append(el("h3", null, "Also at " + str(r, "company")));
+      const ul = el("ul", "b-also");
+      for (const o of mates.slice(0, 12)) ul.append(el("li", null, [displayName(o), str(o, "title")].filter(Boolean).join(" — ")));
+      if (mates.length > 12) ul.append(el("li", null, "and " + (mates.length - 12) + " more"));
+      box.append(ul);
+    }
+  }
+  let briefFor = null;
+  function openBrief(r) {
+    briefFor = r;
+    const box = $("brief-body");
+    box.replaceChildren();
+    fillBrief(box, r, "h2");
+    $("brief-dialog").showModal();
+    $("b-print").focus();
+  }
+  $("b-close").addEventListener("click", () => $("brief-dialog").close());
+  $("b-print").addEventListener("click", () => {
+    if (!briefFor || !mayDownload()) return;
+    printScope = { brief: briefFor };
+    window.print();
+  });
+
+  // QR to a phone (2026-10-06): the contact as a vCard QR code on screen —
+  // a phone's camera adds it to its contacts, no file, no email. The short
+  // form the apps' My Card QR uses (no photo, address or notes) keeps the
+  // code small enough to scan from a laptop screen. Drawn in the page by
+  // assets/qrcode.js, loaded the first time; follows the download rule.
+  function qrButton(r) {
+    const b = el("button", "btn");
+    b.type = "button";
+    b.append(el("span", null, "Show QR"));
+    b.title = "Scan with a phone to add this contact to it";
+    b.addEventListener("click", () => { if (!r.personal || mayDownload()) openQR(r); });
+    return b;
+  }
+  function shortVCard(r) {
+    const L = ["BEGIN:VCARD", "VERSION:3.0"];
+    L.push("N:" + [str(r, "lastName"), str(r, "firstName"), "", "", ""].map(vEsc).join(";"));
+    L.push("FN:" + vEsc(displayName(r)));
+    if (str(r, "company")) L.push("ORG:" + vEsc(str(r, "company")));
+    if (str(r, "title")) L.push("TITLE:" + vEsc(str(r, "title")));
+    if (emails(r)[0]) L.push("EMAIL;TYPE=INTERNET,WORK:" + vEsc(emails(r)[0]));
+    if (str(r, "mobile")) L.push("TEL;TYPE=CELL:" + vEsc(str(r, "mobile")));
+    if (str(r, "phone")) L.push("TEL;TYPE=WORK,VOICE:" + vEsc(str(r, "phone")));
+    const url = safeWebURL(str(r, "website"));
+    if (url) L.push("URL:" + vEsc(url));
+    L.push("END:VCARD");
+    return L.join("\r\n");
+  }
+  let qrLoading = null;
+  function loadQR() {
+    if (!qrLoading) {
+      qrLoading = new Promise((resolve, reject) => {
+        const sc = document.createElement("script");
+        sc.src = "assets/qrcode.js?v=1";
+        sc.onload = () => (window.qrcode ? resolve(window.qrcode) : reject(new Error("qrcode missing")));
+        sc.onerror = () => reject(new Error("qrcode did not load"));
+        document.head.append(sc);
+      });
+      qrLoading.catch(() => { qrLoading = null; });
+    }
+    return qrLoading;
+  }
+  async function openQR(r) {
+    let qrcode;
+    try { qrcode = await loadQR(); } catch (e) { toast("The QR code could not be made — check the connection and try again."); return; }
+    qrcode.stringToBytes = qrcode.stringToBytesFuncs["UTF-8"];
+    const qr = qrcode(0, "M");
+    qr.addData(shortVCard(r), "Byte");
+    qr.make();
+    const n = qr.getModuleCount(), quiet = 4, cells = n + 2 * quiet;
+    const css = 264, scale = Math.max(1, Math.ceil(css * (window.devicePixelRatio || 1) / cells));
+    const cv = $("q-canvas");
+    cv.width = cv.height = cells * scale;
+    cv.style.width = cv.style.height = css + "px";
+    const g = cv.getContext("2d");
+    g.fillStyle = "#ffffff"; g.fillRect(0, 0, cv.width, cv.height);
+    g.fillStyle = "#000000";
+    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (qr.isDark(y, x)) g.fillRect((x + quiet) * scale, (y + quiet) * scale, scale, scale);
+    cv.setAttribute("aria-label", "QR code with the contact details of " + displayName(r));
+    $("q-text").textContent = displayName(r) + (str(r, "company") ? " · " + str(r, "company") : "");
+    $("qr-dialog").showModal();
+    $("q-done").focus();
+  }
+  $("q-done").addEventListener("click", () => $("qr-dialog").close());
+
   if (cfg.testHooks) window.__cardlioMapState = () => ({ loaded: !!window.mapkit, ids: mapState.ids, failed: mapState.failed, pins: mapState.map ? mapState.map.annotations.length : 0, note: $("map-note").textContent });
 
   function setView(v) {
@@ -2209,7 +2386,7 @@
         w.addEventListener("click", () => openMail(r, LIB.followUpOwed(r) || !LIB.reconnectDue(r) ? "followUp" : "reconnect"));
         actions.append(w);
       }
-      actions.append(link);
+      actions.append(link, briefButton(r), qrButton(r));
       if (state.teams.some((t) => !t.personal)) {
         const sh = el("button", "btn");
         sh.type = "button";
@@ -2264,7 +2441,7 @@
       try { await navigator.clipboard.writeText(url); toast("Link copied"); }
       catch (e) { toast(url); }
     });
-    actions.append(link);
+    actions.append(link, briefButton(r), qrButton(r));
     if (canDelete(r)) {
       const del = el("button", "btn quiet");
       del.type = "button";
