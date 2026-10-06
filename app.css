@@ -995,3 +995,38 @@ button.bar-row:hover, button.bar-row:focus-visible { background: var(--bg-sunken
   .print-sheet .b-notes { white-space: pre-wrap; margin: 0; }
   .print-sheet .b-also { margin: 0; padding-left: 5mm; }
 }
+
+/* ------------- local time, talking points, network graph (2026-10-06) */
+.lt { display: inline-block; justify-self: start; margin-top: 3px; padding: 1px 7px; border-radius: 999px; font-size: 11.5px; color: var(--muted); background: var(--bg-alt, rgba(127,127,127,.08)); white-space: nowrap; }
+.lt.good { color: #0b6b4f; background: rgba(16, 150, 110, 0.12); }
+.today-head .reach { margin-left: auto; font-size: 12px; color: #0b6b4f; }
+.map-pick-row .lt { margin-top: 4px; }
+.b-points { margin: 0; padding-left: 20px; font-size: 14px; display: grid; gap: 6px; }
+.b-points a, .b-src a { color: var(--accent); }
+.b-src { margin: 8px 0 0; font-size: 12.5px; color: var(--muted); }
+.b-points-note { margin: 12px 0 0; font-size: 12.5px; }
+.brief-dialog .row .spacer { flex: 1; }
+.graph-panel { --g-event: var(--accent); --g-company: #0E8C7E; }
+.graph-wrap { width: 100%; overflow: hidden; }
+.graph { width: 100%; height: auto; display: block; }
+.graph line { stroke: var(--line-strong, #c9cbd3); opacity: .8; }
+.graph .g-node { cursor: pointer; outline: none; }
+.graph .g-node.event rect { fill: var(--g-event); stroke: var(--bg-raised); stroke-width: 2; }
+.graph .g-node.company circle { fill: var(--g-company); stroke: var(--bg-raised); stroke-width: 2; }
+.graph text { font-size: 12px; fill: var(--ink-2); paint-order: stroke; stroke: var(--bg-raised); stroke-width: 3px; stroke-linejoin: round; pointer-events: none; }
+.graph .g-node.event text { font-weight: 600; fill: var(--ink); }
+.graph .g-node:focus-visible rect, .graph .g-node:focus-visible circle { stroke: var(--ink); stroke-width: 3; }
+.graph.focus .g-node:not(.near) { opacity: .25; }
+.graph.focus line:not(.near) { opacity: .12; }
+.graph.focus line.near { stroke: var(--ink-2); opacity: 1; }
+.graph-legend { display: flex; gap: 16px; margin: 4px 0 0; font-size: 12.5px; color: var(--muted); }
+.graph-legend .lg::before { content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 6px; vertical-align: -1px; }
+.graph-legend .event::before { background: var(--g-event); border-radius: 2px; }
+.graph-legend .company::before { background: var(--g-company); border-radius: 50%; }
+.graph-facts { margin: 2px 0 0; font-size: 13px; color: var(--ink-2); }
+@media (prefers-color-scheme: dark) {
+  .graph-panel { --g-company: #3CC4B0; }
+  .lt.good, .today-head .reach { color: #5fd3a8; }
+  .lt.good { background: rgba(95, 211, 168, 0.14); }
+}
+@media print { .print-sheet .b-points { padding-left: 5mm; } .print-sheet .b-src { color: #555; } }

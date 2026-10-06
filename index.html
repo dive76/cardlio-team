@@ -14,7 +14,7 @@
 <meta name="theme-color" content="#4F46E5">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="assets/icon-192.png">
-<link rel="stylesheet" href="app.css?v=20">
+<link rel="stylesheet" href="app.css?v=21">
 </head>
 <body>
 
@@ -474,7 +474,10 @@
 
 <dialog id="brief-dialog" class="small-dialog brief-dialog" aria-labelledby="b-title">
   <div class="brief" id="brief-body"></div>
+  <p class="fine b-points-note" id="b-points-note"></p>
   <div class="row">
+    <button class="btn" type="button" id="b-points">Talking points</button>
+    <span class="spacer"></span>
     <button class="btn" type="button" id="b-close">Close</button>
     <button class="btn primary" type="button" id="b-print">Print</button>
   </div>
@@ -625,7 +628,8 @@
 
 <script src="config.js?v=2"></script>
 <script src="https://cdn.apple-cloudkit.com/ck/2/cloudkit.js"></script>
+<script src="assets/zones.js?v=1"></script>
 <script src="mycards.js?v=4"></script>
-<script src="app.js?v=25"></script>
+<script src="app.js?v=26"></script>
 </body>
 </html>

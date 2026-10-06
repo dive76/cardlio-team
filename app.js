@@ -1614,6 +1614,7 @@
     box.append(barPanel("Industries", countBy(list, (r) => str(r, "industry")).map(pick((v) => { state.industry = v; $("industry-filter").value = v; renderGrid(); }))));
     box.append(barPanel("Companies", countBy(list, (r) => str(r, "company")).map(pick((v) => { state.company = v; renderGrid(); }))));
     box.append(barPanel("Events", countBy(list, (r) => str(r, "eventTag")).map(pick((v) => { state.event = v; renderTeam(); }))));
+    box.append(graphPanel(list));
   }
   // ------------------------------------------------ map (2026-10-06)
   //
@@ -1755,6 +1756,8 @@
       const b = el("button", "map-pick-row"); b.type = "button";
       b.append(el("strong", null, displayName(r)));
       if (m.subtitle) b.append(el("span", null, m.subtitle));
+      const chip = clockChip(r);
+      if (chip) b.append(chip);
       b.addEventListener("click", () => openDetail(r));
       const li = el("li"); li.append(b); ul.append(li);
     }
@@ -1818,6 +1821,8 @@
     const dl = el("dl", "b-facts");
     const row = (k, v) => { if (!v) return; dl.append(el("dt", null, k), el("dd", null, v)); };
     row("Reach", [emails(r)[0], str(r, "mobile"), str(r, "phone"), str(r, "website")].filter(Boolean).join("  ·  "));
+    const lt = localTime(r);
+    if (lt) row("Local time", lt.day + " " + lt.time + " in " + lt.place + (lt.same ? " (your time zone)" : " · " + lt.mood));
     if (r.personal) {
       row("Met", [str(r, "eventTag"), when(scannedAt(r)) ? "added " + when(scannedAt(r)) : ""].filter(Boolean).join(" · "));
     } else {
@@ -1845,10 +1850,30 @@
       if (mates.length > 12) ul.append(el("li", null, "and " + (mates.length - 12) + " more"));
       box.append(ul);
     }
+    const tp = pointsCache.get(r.recordName);
+    if (tp) {
+      box.append(el("h3", null, "Talking points"));
+      const ol = el("ol", "b-points");
+      for (const pt of tp.points) {
+        const li = el("li", null, pt.text);
+        if (pt.source) { const a = el("a", null, "source"); a.href = pt.source; a.target = "_blank"; a.rel = "noopener noreferrer"; li.append(" ", a); }
+        ol.append(li);
+      }
+      box.append(ol);
+      if (tp.sources.length) {
+        const src = el("p", "b-src", "Sources: ");
+        tp.sources.forEach((x, i) => { if (i) src.append(" · "); const a = el("a", null, x.title || hostOf(x.url)); a.href = x.url; a.target = "_blank"; a.rel = "noopener noreferrer"; src.append(a); });
+        box.append(src);
+      }
+      box.append(el("p", "b-src", "Found by " + tp.engine + " on " + when(tp.at) + ". Check a point before you rely on it."));
+    }
   }
   let briefFor = null;
   function openBrief(r) {
     briefFor = r;
+    const p = aiProvider();
+    $("b-points").textContent = pointsCache.get(r.recordName) ? "Find new talking points" : "Talking points";
+    $("b-points-note").textContent = "Talking points: " + (aiKey(p) ? AI[p].label : "Claude or Gemini, with your own key,") + " searches the web for " + (str(r, "company") || "the company") + "'s recent news and suggests three openers. It is sent the company, its website, the title, the place, the event, the interests and your notes on this card — not the person's name.";
     const box = $("brief-body");
     box.replaceChildren();
     fillBrief(box, r, "h2");
@@ -1925,6 +1950,341 @@
     $("q-done").focus();
   }
   $("q-done").addEventListener("click", () => $("qr-dialog").close());
+
+  // ------------------------------------------ local time (2026-10-06)
+  //
+  // Each person's local time — "Thu 15:42 in Tokyo · working hours" — on
+  // the brief, the Today strip and the map's address list. The zone is
+  // the country's only zone, or the one whose main city is nearest the
+  // card's coordinates (assets/zones.js, from the tz database); a card
+  // in a country with several zones and no coordinates gets none rather
+  // than a guess. The browser's own clock does the daylight saving.
+  const ZONES = window.CARDLIO_ZONES || {};
+  const REGION_CODES = (() => {
+    const out = new Map();
+    try {
+      const dn = new Intl.DisplayNames(["en"], { type: "region" });
+      for (const cc of Object.keys(ZONES)) { const n = dn.of(cc); if (n && n !== cc) out.set(fold(n), cc); }
+    } catch (e) { /* an old browser: ISO codes only */ }
+    const aliases = { "usa": "US", "u.s.a.": "US", "united states of america": "US", "uk": "GB", "u.k.": "GB", "great britain": "GB", "england": "GB", "scotland": "GB", "wales": "GB",
+      "uae": "AE", "u.a.e.": "AE", "korea": "KR", "south korea": "KR", "republic of korea": "KR", "turkey": "TR", "turkiye": "TR", "russia": "RU",
+      "vietnam": "VN", "viet nam": "VN", "hong kong sar": "HK", "hong kong sar china": "HK", "taiwan": "TW", "holland": "NL", "the netherlands": "NL", "czech republic": "CZ", "prc": "CN" };
+    for (const [k, v] of Object.entries(aliases)) out.set(k, v);
+    return out;
+  })();
+  function countryCode(r) {
+    const iso = str(r, "isoCountryCode").toUpperCase();
+    if (ZONES[iso]) return iso;
+    return REGION_CODES.get(fold(str(r, "country"))) || REGION_CODES.get(fold(str(r, "city"))) || "";   // "Singapore", "Hong Kong"
+  }
+  function zoneOf(r) {
+    const list = ZONES[countryCode(r)];
+    if (!list) return "";
+    if (list.length === 1) return list[0][2];
+    if (hasPlace(r)) {
+      const lat = f(r, "latitude"), lon = f(r, "longitude"), k = Math.cos(lat * Math.PI / 180);
+      let best = "", bd = Infinity;
+      for (const z of list) {
+        const dLon = ((z[1] - lon + 540) % 360) - 180, d = (z[0] - lat) ** 2 + (dLon * k) ** 2;
+        if (d < bd) { bd = d; best = z[2]; }
+      }
+      return best;
+    }
+    const city = fold(str(r, "city")).replace(/\s+/g, "_");
+    const hit = city && list.find((z) => fold(z[2].split("/").pop()) === city);
+    return hit ? hit[2] : "";
+  }
+  // Friday–Saturday weekends; everywhere else Saturday–Sunday.
+  const FRI_SAT = new Set(["SA", "KW", "QA", "BH", "OM", "EG", "IL", "JO", "IQ", "YE", "DZ", "SY", "LY", "SD"]);
+  const clockParts = (zone, now) => new Intl.DateTimeFormat("en-GB", { timeZone: zone, weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(now);
+  function localTime(r, at) {
+    const zone = zoneOf(r);
+    if (!zone) return null;
+    const now = new Date(at || Date.now());
+    let parts, mine;
+    try { parts = clockParts(zone, now); mine = clockParts(Intl.DateTimeFormat().resolvedOptions().timeZone, now); } catch (e) { return null; }
+    const get = (ps, t) => (ps.find((x) => x.type === t) || {}).value || "";
+    const hour = +get(parts, "hour"), day = get(parts, "weekday"), time = get(parts, "hour") + ":" + get(parts, "minute");
+    const weekend = FRI_SAT.has(countryCode(r)) ? (day === "Fri" || day === "Sat") : (day === "Sat" || day === "Sun");
+    const working = !weekend && hour >= 9 && hour < 18;
+    const mood = weekend ? "weekend there" : working ? "working hours" : hour >= 18 && hour < 22 ? "evening there" : hour >= 6 && hour < 9 ? "early morning there" : "night there";
+    const same = time === get(mine, "hour") + ":" + get(mine, "minute") && day === get(mine, "weekday");
+    return { zone, day, time, working, mood, same, place: str(r, "city") || zone.split("/").pop().replace(/_/g, " ") };
+  }
+  // A small clock that keeps time: refreshed every minute while shown.
+  function clockChip(r) {
+    const t = localTime(r);
+    if (!t || t.same) return null;
+    const c = el("span", "lt");
+    c.dataset.rec = r.recordName;
+    paintClock(c, t);
+    return c;
+  }
+  function paintClock(c, t) {
+    c.textContent = t.day + " " + t.time + " · " + t.place;
+    c.classList.toggle("good", t.working);
+    c.title = "Local time in " + t.place + " — " + t.mood;
+  }
+  setInterval(() => {
+    if (!state.team || document.hidden) return;
+    for (const c of document.querySelectorAll(".lt[data-rec]")) {
+      const r = state.team.records.find((x) => x.recordName === c.dataset.rec);
+      const t = r && localTime(r);
+      if (t) paintClock(c, t);
+    }
+  }, 60000);
+
+  // ------------------------------------ talking points (2026-10-06)
+  //
+  // On the brief: the member's own Claude or Gemini key searches the web
+  // for the COMPANY's recent news and suggests three openers from it and
+  // the notes. Sent: company, website, title, place, event, interests,
+  // notes — never the person's name (the apps' company research sends
+  // the same kind). A source link is kept only when the search returned
+  // that page (Claude); Gemini's grounding pages are listed underneath.
+  const pointsCache = new Map();   // recordName → { points, sources, engine, at }
+  const POINT_RULES = "You help a business person prepare for a call or a meeting with a contact. Use web search to find the contact's COMPANY's notable news from the last 12 months (orders, results, expansions, new offices, leadership changes, products). Then give exactly three short talking points (each under 35 words) the user could open the conversation with, combining that news with the meeting notes and interests provided.\n\nRULES:\n- Never invent news. A point that relies on news must give the URL of the page it came from, taken from your search results. If you find nothing recent and relevant, base the points on the notes, the interests and the company's line of business, and leave the source empty.\n- Search for the company only; do not research the person.\n- No flattery, no sales pitch, no placeholders.\n\nAnswer with JSON only, no markdown: {\"points\": [{\"text\": \"...\", \"source\": \"https://... or empty\"}]}";
+  function pointsPrompt(r) {
+    const facts = [];
+    if (str(r, "company")) facts.push("Company: " + str(r, "company"));
+    const web = safeWebURL(str(r, "website"));
+    if (web) facts.push("Company website: " + web);
+    if (str(r, "industry")) facts.push("Industry: " + str(r, "industry"));
+    if (str(r, "title")) facts.push("The contact's job title: " + str(r, "title"));
+    const place = [str(r, "city"), str(r, "country")].filter(Boolean).join(", ");
+    if (place) facts.push("Location: " + place);
+    if (str(r, "eventTag")) facts.push("Met at: " + str(r, "eventTag"));
+    if (interests(r).length) facts.push("They were interested in: " + interests(r).join(", "));
+    const notes = r.personal ? str(r, "notes") : str(r, "teamNotes");
+    return "TODAY: " + new Date().toISOString().slice(0, 10) + "\n\nCONTACT:\n" + facts.join("\n") + "\n\nMEETING NOTES:\n" + (notes || "(none)");
+  }
+  function hostOf(u) { try { return new URL(u).hostname.replace(/^www\./, ""); } catch (e) { return u; } }
+  async function talkingPoints(provider, key, prompt) {
+    let res;
+    if (provider === "claude") {
+      res = await fetch(AI.claude.url, { method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
+        body: JSON.stringify({ model: AI.claude.model, max_tokens: 1500, system: POINT_RULES,
+          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }],
+          messages: [{ role: "user", content: prompt }] }) });
+    } else {
+      res = await fetch(AI.gemini.url, { method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], systemInstruction: { parts: [{ text: POINT_RULES }] },
+          tools: [{ google_search: {} }], generationConfig: { maxOutputTokens: 2048 } }) });
+    }
+    if (!res.ok) {
+      let detail = "";
+      try { const j = await res.json(); detail = (j.error && (j.error.message || j.error.type)) || ""; } catch (e) { /* */ }
+      if (res.status === 401 || res.status === 403) throw Object.assign(new Error(AI[provider].label + " rejected the key" + (detail ? ": " + detail : "")), { badKey: true });
+      throw new Error(AI[provider].label + " answered " + res.status + (detail ? ": " + detail : ""));
+    }
+    const j = await res.json();
+    let text = "", found = new Set(), sources = [];
+    if (provider === "claude") {
+      for (const b of j.content || []) {
+        if (b.type === "text") text += b.text || "";
+        if (b.type === "web_search_tool_result" && Array.isArray(b.content)) for (const x of b.content) if (x && x.url) found.add(x.url);
+      }
+    } else {
+      const c = (j.candidates || [])[0] || {};
+      text = ((c.content || { parts: [] }).parts || []).map((x) => x.text || "").join("");
+      for (const g of ((c.groundingMetadata || {}).groundingChunks || [])) if (g.web && g.web.uri && /^https:/.test(g.web.uri)) sources.push({ url: g.web.uri, title: g.web.title || "" });
+      sources = sources.slice(0, 5);
+    }
+    const a = text.search(/\{\s*"points"/), b = text.lastIndexOf("}");
+    if (a < 0 || b < a) throw new Error(AI[provider].label + " returned no talking points");
+    const out = JSON.parse(text.slice(a, b + 1));
+    const norm = (u) => String(u || "").replace(/\/+$/, "");
+    const foundN = new Set([...found].map(norm));
+    const points = (Array.isArray(out.points) ? out.points : []).filter((x) => x && typeof x.text === "string" && x.text.trim()).slice(0, 3).map((x) => ({
+      text: x.text.trim(),
+      source: provider === "claude" && /^https:\/\//.test(x.source || "") && foundN.has(norm(x.source)) ? x.source : ""
+    }));
+    if (!points.length) throw new Error(AI[provider].label + " returned no talking points");
+    return { points, sources, engine: AI[provider].label, at: Date.now() };
+  }
+  async function runPoints() {
+    const r = briefFor, p = aiProvider(), key = aiKey(p);
+    if (!r) return;
+    if (!key) { openKeys(runPoints); return; }
+    const btn = $("b-points");
+    btn.disabled = true; btn.textContent = "Searching…";
+    try {
+      pointsCache.set(r.recordName, await talkingPoints(p, key, pointsPrompt(r)));
+      if (briefFor === r) {
+        const box = $("brief-body");
+        box.replaceChildren();
+        fillBrief(box, r, "h2");
+        const h = [...box.querySelectorAll("h3")].find((x) => x.textContent === "Talking points");
+        if (h) h.scrollIntoView({ block: "start", behavior: "smooth" });
+      }
+    } catch (e) {
+      if (e.badKey) openKeys(runPoints);
+      toast(e.message || "No talking points this time", true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = pointsCache.get(r.recordName) ? "Find new talking points" : "Talking points";
+    }
+  }
+  $("b-points").addEventListener("click", runPoints);
+
+  // ------------------------------------- network graph (2026-10-06)
+  //
+  // In the Overview: events and the companies you met there, as a graph.
+  // A company met at several fairs sits between them; an event's reach
+  // shows in how many companies hang off it. Size = people. Click an
+  // event or a company to show its cards. Laid out once per render with
+  // a small force simulation (Fruchterman–Reingold), drawn as SVG.
+  const SVGNS = "http://www.w3.org/2000/svg";
+  function svgEl(tag, attrs) { const n = document.createElementNS(SVGNS, tag); for (const [k, v] of Object.entries(attrs || {})) n.setAttribute(k, v); return n; }
+  function graphPanel(list) {
+    const panel = el("section", "ov-panel wide graph-panel");
+    const head = el("div", "ov-head");
+    head.append(el("h2", null, "Events and companies"), el("span", "ov-note", "who you met where — size is people"));
+    panel.append(head);
+    const events = new Map(), companies = new Map(), edges = new Map();
+    for (const r of list) {
+      const ev = str(r, "eventTag"), co = str(r, "company");
+      if (!ev || !co) continue;
+      const ck = fold(co);
+      if (!events.has(ev)) events.set(ev, { id: "e:" + ev, kind: "event", label: ev, people: 0 });
+      if (!companies.has(ck)) companies.set(ck, { id: "c:" + ck, kind: "company", label: co, people: 0, events: new Set() });
+      events.get(ev).people++;
+      const c = companies.get(ck);
+      c.people++;
+      c.events.add(ev);
+      const k = ev + "\u0000" + ck;
+      edges.set(k, (edges.get(k) || 0) + 1);
+    }
+    if (!events.size) { panel.append(el("p", "ov-empty", "Tag cards with the event where you met them, and this shows which fairs brought which companies.")); return panel; }
+    const evs = [...events.values()].sort((a, b) => b.people - a.people).slice(0, 20);
+    const evSet = new Set(evs.map((e) => e.label));
+    const cos = [...companies.values()].filter((c) => [...c.events].some((e) => evSet.has(e)))
+      .sort((a, b) => b.events.size - a.events.size || b.people - a.people).slice(0, 70);
+    const nodes = [...evs, ...cos];
+    const index = new Map(nodes.map((n, i) => [n.id, i]));
+    const links = [];
+    for (const [k, w] of edges) {
+      const [ev, ck] = k.split("\u0000");
+      const a = index.get("e:" + ev), b = index.get("c:" + ck);
+      if (a !== undefined && b !== undefined) links.push({ a, b, w });
+    }
+    // A phone gets a narrow, taller drawing so the text stays readable.
+    const narrow = window.innerWidth < 640;
+    const W = narrow ? 400 : 960, H = Math.round(narrow ? Math.min(640, Math.max(380, 260 + nodes.length * 7)) : Math.min(560, Math.max(300, 200 + nodes.length * 6))), radius = (n) => n.kind === "event" ? 9 + 3 * Math.sqrt(n.people) : 4 + 2.4 * Math.sqrt(n.people);
+    // Events stand on a ring; each company is pulled towards the events
+    // where you met it, so a one-fair company sits beside its fair and a
+    // company met at several fairs ends up between them, near the middle.
+    // Laid out around (0, 0), then fitted into the frame.
+    const RX = narrow ? 130 : 330, RY = narrow ? 230 : 190;
+    evs.forEach((e, i) => {
+      const ang = -Math.PI / 2 + 2 * Math.PI * i / evs.length;
+      e.x = evs.length === 1 ? 0 : RX * Math.cos(ang); e.y = evs.length === 1 ? 0 : RY * Math.sin(ang);
+    });
+    const evPos = new Map(evs.map((e) => [e.label, e]));
+    cos.forEach((c, i) => {
+      const own = [...c.events].map((x) => evPos.get(x)).filter(Boolean);
+      const mx0 = own.reduce((t, e) => t + e.x, 0) / own.length, my0 = own.reduce((t, e) => t + e.y, 0) / own.length;
+      const ang = i * 2.399963;   // golden angle: a stable, even spread
+      c.x = mx0 + 30 * Math.cos(ang); c.y = my0 + 30 * Math.sin(ang);
+    });
+    for (let it = 0, temp = 30; it < 220; it++, temp *= 0.985) {
+      for (const c of cos) {
+        let fx = 0, fy = 0;
+        for (const ev of c.events) {   // springs to its events
+          const e = evPos.get(ev);
+          if (!e) continue;
+          const ex = e.x - c.x, ey = e.y - c.y, d = Math.max(1, Math.hypot(ex, ey)), rest = 46 + radius(e);
+          fx += ex / d * (d - rest) * 0.08; fy += ey / d * (d - rest) * 0.08;
+        }
+        for (const o of nodes) {   // keep clear of every other node
+          if (o === c) continue;
+          const ex = c.x - o.x, ey = c.y - o.y, d = Math.max(0.5, Math.hypot(ex, ey)), min = radius(c) + radius(o) + 16;
+          if (d < min * 2.2) { const push = (min * 2.2 - d) / d * 0.35; fx += ex * push; fy += ey * push; }
+        }
+        const step = Math.hypot(fx, fy), k = step > temp ? temp / step : 1;
+        c.x += fx * k; c.y += fy * k;
+      }
+    }
+    const mx = narrow ? 56 : 90, myT = 22, myB = 34;   // room for the labels
+    const xs = nodes.map((n) => n.x), ys = nodes.map((n) => n.y);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    const sc = Math.min(1.6, (W - 2 * mx) / Math.max(1, x1 - x0), (H - myT - myB) / Math.max(1, y1 - y0));
+    for (const n of nodes) {
+      n.x = W / 2 + (n.x - (x0 + x1) / 2) * sc;
+      n.y = myT + (H - myT - myB) / 2 + (n.y - (y0 + y1) / 2) * sc;
+    }
+    const svg = svgEl("svg", { viewBox: "0 0 " + W + " " + H, class: "graph", role: "group", "aria-label": "Events and the companies met there" });
+    const gl = svgEl("g", { class: "g-links" }), gn = svgEl("g", { class: "g-nodes" });
+    const linkEls = links.map((l) => {
+      const ln = svgEl("line", { x1: nodes[l.a].x.toFixed(1), y1: nodes[l.a].y.toFixed(1), x2: nodes[l.b].x.toFixed(1), y2: nodes[l.b].y.toFixed(1), "stroke-width": String(1 + Math.min(l.w, 4) * 0.6) });
+      gl.append(ln);
+      return ln;
+    });
+    // Labels: every event, then companies by how many fairs and people,
+    // skipping any that would collide with a label already placed.
+    const labelled = new Set(), boxes = [];
+    const labelText = (n) => (n.label.length > 26 ? n.label.slice(0, 25) + "…" : n.label);
+    for (const n of [...evs, ...cos]) {
+      const w = labelText(n).length * (n.kind === "event" ? 7 : 6.3), y = n.y + radius(n) + 13;
+      const bx = { x0: n.x - w / 2 - 3, x1: n.x + w / 2 + 3, y0: y - 11, y1: y + 3 };
+      const hits = boxes.some((o) => bx.x0 < o.x1 && bx.x1 > o.x0 && bx.y0 < o.y1 && bx.y1 > o.y0)
+        || nodes.some((o) => o !== n && Math.abs(o.x - n.x) < w / 2 + radius(o) && o.y > bx.y0 - radius(o) && o.y < bx.y1 + radius(o));
+      if (n.kind === "event" || (!hits && labelled.size < evs.length + (narrow ? 8 : 18))) { labelled.add(n.id); boxes.push(bx); }
+    }
+    const nodeEls = nodes.map((n, i) => {
+      const g = svgEl("g", { class: "g-node " + n.kind, tabindex: "0", role: "button" });
+      const r = radius(n);
+      const desc = n.kind === "event"
+        ? n.label + ": " + plural(n.people, "person") .replace("persons", "people") + " from " + plural(cos.filter((c) => c.events.has(n.label)).length, "company").replace("companys", "companies")
+        : n.label + ": " + plural(n.people, "person").replace("persons", "people") + (n.events.size > 1 ? ", met at " + n.events.size + " events" : "");
+      g.setAttribute("aria-label", desc + " — show the cards");
+      const t = svgEl("title"); t.textContent = desc; g.append(t);
+      g.append(n.kind === "event"
+        ? svgEl("rect", { x: (n.x - r).toFixed(1), y: (n.y - r).toFixed(1), width: (2 * r).toFixed(1), height: (2 * r).toFixed(1), rx: "4" })
+        : svgEl("circle", { cx: n.x.toFixed(1), cy: n.y.toFixed(1), r: r.toFixed(1) }));
+      if (labelled.has(n.id)) {
+        const tx = svgEl("text", { x: n.x.toFixed(1), y: (n.y + r + 13).toFixed(1), "text-anchor": "middle" });
+        tx.textContent = labelText(n);
+        g.append(tx);
+      }
+      const go = () => {
+        if (n.kind === "event") { state.event = n.label; setView("grid"); renderTeam(); }
+        else { state.company = n.label; setView("grid"); }
+      };
+      g.addEventListener("click", go);
+      g.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
+      const near = new Set([i]);
+      links.forEach((l) => { if (l.a === i) near.add(l.b); if (l.b === i) near.add(l.a); });
+      const hi = (on) => {
+        svg.classList.toggle("focus", on);
+        nodeEls.forEach((x, j) => x.classList.toggle("near", on && near.has(j)));
+        linkEls.forEach((x, j) => x.classList.toggle("near", on && (links[j].a === i || links[j].b === i)));
+      };
+      g.addEventListener("mouseenter", () => hi(true)); g.addEventListener("mouseleave", () => hi(false));
+      g.addEventListener("focus", () => hi(true)); g.addEventListener("blur", () => hi(false));
+      gn.append(g);
+      return g;
+    });
+    for (const g of gn.querySelectorAll(".g-node.event")) gn.append(g);   // events (and their labels) on top
+    svg.append(gl, gn);
+    const wrap = el("div", "graph-wrap");
+    wrap.append(svg);
+    panel.append(wrap);
+    const legend = el("p", "graph-legend");
+    legend.append(el("span", "lg event", "Event"), el("span", "lg company", "Company"));
+    panel.append(legend);
+    const again = cos.filter((c) => c.events.size > 1).slice(0, 5);
+    const facts = [];
+    const topEv = evs.slice().sort((a, b) => cos.filter((c) => c.events.has(b.label)).length - cos.filter((c) => c.events.has(a.label)).length)[0];
+    if (topEv) facts.push("Most companies: " + topEv.label + " (" + cos.filter((c) => c.events.has(topEv.label)).length + ")");
+    if (again.length) facts.push("Met at several events: " + again.map((c) => c.label + " (" + c.events.size + ")").join(", "));
+    if (facts.length) panel.append(el("p", "graph-facts", facts.join(" · ")));
+    if (companies.size > cos.length || events.size > evs.length) panel.append(el("p", "ov-more", "Showing the " + evs.length + " biggest events and " + cos.length + " companies."));
+    return panel;
+  }
+  if (cfg.testHooks) Object.assign(window, { __cardlioGraph: (list) => graphPanel(list), __cardlioLocalTime: (name) => { const r = state.team.records.find((x) => displayName(x).includes(name)); return r ? { zone: zoneOf(r), cc: countryCode(r), lt: localTime(r) } : null; } });
 
   if (cfg.testHooks) window.__cardlioMapState = () => ({ loaded: !!window.mapkit, ids: mapState.ids, failed: mapState.failed, pins: mapState.map ? mapState.map.annotations.length : 0, note: $("map-note").textContent });
 
@@ -2095,6 +2455,8 @@
       const head = el("div", "today-head");
       head.append(el("h2", null, title), el("span", "n", String(list.length)));
       if (list.length > 5) head.append(summaryLink("Show all", () => setMFilter(filter)));
+      const reach = list.filter((x) => { const t = localTime(x); return t && t.working && !t.same; }).length;
+      if (reach) head.append(el("span", "reach", reach + " in working hours now"));
       c.append(head);
       for (const r of list.slice(0, 5)) {
         const row = el("div", "today-row");
@@ -2105,6 +2467,8 @@
         nm.type = "button";
         nm.addEventListener("click", () => openDetail(r));
         who.append(nm, el("span", "sub", [fullName(r) ? str(r, "company") : "", sub(r)].filter(Boolean).join(" · ")));
+        const chip = clockChip(r);
+        if (chip) who.append(chip);
         const btns = el("div", "btns");
         btns.append(...followButtons(r, purpose, doneLabel, { [doneKey]: now }, doneToast));
         row.append(av, who, btns);
