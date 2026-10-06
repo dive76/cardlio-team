@@ -45,7 +45,9 @@
     view: storageGet("cardlio.team.view") || "grid",
     mfilter: storageGet("cardlio.mine.filter") || "all",   // My cards: all, owed, reconnect, notes
     country: "",
-    industry: ""
+    industry: "",
+    company: "",    // the app's search tokens (Company: …, Interest: …), picked from the suggestions
+    interest: ""
   };
   // A stable colour per person, for the avatars.
   function personHue(name) { let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
@@ -566,6 +568,8 @@
 
   function selectTeam(team) {
     if (state.team !== team) state.selected.clear();
+    // Values belong to one library: a team's countries are not My cards'.
+    if (!state.team || state.team.id !== team.id) { state.country = state.industry = state.company = state.interest = ""; }
     state.team = team;
     state.event = "";
     $("new-pill").hidden = !(team.pendingRecords && team.pendingRecords.length);
@@ -624,11 +628,13 @@
     if (!state.team) return out;
     if (state.team.personal) {
       if (state.mfilter !== "all") out.push({ text: label("mine-filter-group", "mfilter", state.mfilter), clear: () => setMFilter("all") });
-      if (state.country) out.push({ text: state.country, clear: () => { state.country = ""; $("country-filter").value = ""; renderGrid(); } });
-      if (state.industry) out.push({ text: state.industry, clear: () => { state.industry = ""; $("industry-filter").value = ""; renderGrid(); } });
     } else if (state.filter !== "all") {
       out.push({ text: label("filter-group", "filter", state.filter), clear: () => setFilter("all") });
     }
+    if (state.company) out.push({ text: "Company: " + state.company, clear: () => { state.company = ""; renderGrid(); } });
+    if (state.country) out.push({ text: "Country: " + state.country, clear: () => { state.country = ""; $("country-filter").value = ""; renderGrid(); } });
+    if (state.industry) out.push({ text: "Industry: " + state.industry, clear: () => { state.industry = ""; $("industry-filter").value = ""; renderGrid(); } });
+    if (state.interest) out.push({ text: "Interest: " + state.interest, clear: () => { state.interest = ""; renderGrid(); } });
     if (state.rating) out.push({ text: RATINGS[state.rating].label + " leads", clear: () => setRating("") });
     return out;
   }
@@ -789,34 +795,50 @@
     select.disabled = !names.length;
   }
 
+  // Search works like the apps' (CardSearchToken + BusinessCard.matches):
+  // the text is looked for in every field, and the suggestions under the
+  // search field turn a typed value into a filter — Country, Company,
+  // Industry, Event, Interest, Lead, Follow-up, Keep in touch.
+  const same = (a, b) => a.localeCompare(b, undefined, { sensitivity: "accent" }) === 0;
+  function searchText(r) {
+    return fold([fullName(r), str(r, "firstNameAlternative"), str(r, "lastNameAlternative"), str(r, "phoneticName"),
+      str(r, "title"), str(r, "company"), emails(r).join(" "),
+      str(r, "phone"), str(r, "mobile"), str(r, "website"), str(r, "city"), str(r, "country"), str(r, "isoCountryCode"),
+      str(r, "eventTag"), str(r, "scannedBy"), str(r, "claimedBy"), str(r, "notes"), str(r, "teamNotes"),
+      rating(r) ? RATINGS[rating(r)].label : "", interests(r).join(" "),
+      str(r, "honorific"), str(r, "fax"), listOf(r, "additionalPhones").join(" "), str(r, "building"), str(r, "street"),
+      str(r, "unit"), str(r, "postalCode"), str(r, "industry"), str(r, "linkedin"), str(r, "wechat"),
+      str(r, "translatedTitle"), str(r, "translatedCompany"), str(r, "translatedAddress")].join(" "));
+  }
+  function passesFilters(r, now) {
+    const personal = !!state.team.personal;
+    if (personal) {
+      if (state.mfilter === "owed" && !LIB.followUpOwed(r)) return false;
+      if (state.mfilter === "reconnect" && !LIB.reconnectDue(r, now)) return false;
+      if (state.mfilter === "notes" && !str(r, "notes")) return false;
+    } else {
+      const taken = !!str(r, "claimedBy");
+      if (state.filter === "open" && taken) return false;
+      if (state.filter === "taken" && !taken) return false;
+      if (state.filter === "mine" && !isMine(r)) return false;
+      if (state.filter === "notes" && !str(r, "teamNotes").trim()) return false;
+    }
+    if (state.country && !same(str(r, "country"), state.country)) return false;
+    if (state.industry && !same(str(r, "industry"), state.industry)) return false;
+    if (state.company && !same(str(r, "company"), state.company)) return false;
+    if (state.interest && !interests(r).some((i) => same(i, state.interest))) return false;
+    if (state.rating && rating(r) !== state.rating) return false;
+    if (state.event && str(r, "eventTag") !== state.event) return false;
+    return true;
+  }
+
   function visibleRecords() {
     const q = fold(state.query.trim());
-    const personal = !!state.team.personal, now = Date.now();
+    const now = Date.now();
     let list = state.team.records.filter((r) => {
-      if (personal) {
-        if (state.mfilter === "owed" && !LIB.followUpOwed(r)) return false;
-        if (state.mfilter === "reconnect" && !LIB.reconnectDue(r, now)) return false;
-        if (state.mfilter === "notes" && !str(r, "notes")) return false;
-        if (state.country && str(r, "country") !== state.country) return false;
-        if (state.industry && str(r, "industry") !== state.industry) return false;
-      } else {
-        const taken = !!str(r, "claimedBy");
-        if (state.filter === "open" && taken) return false;
-        if (state.filter === "taken" && !taken) return false;
-        if (state.filter === "mine" && !isMine(r)) return false;
-        if (state.filter === "notes" && !str(r, "teamNotes").trim()) return false;
-      }
-      if (state.rating && rating(r) !== state.rating) return false;
-      if (state.event && str(r, "eventTag") !== state.event) return false;
+      if (!passesFilters(r, now)) return false;
       if (!q) return true;
-      const hay = fold([fullName(r), str(r, "title"), str(r, "company"), emails(r).join(" "),
-        str(r, "phone"), str(r, "mobile"), str(r, "website"), str(r, "city"), str(r, "country"),
-        str(r, "eventTag"), str(r, "scannedBy"), str(r, "claimedBy"), str(r, "notes"), str(r, "teamNotes"),
-        rating(r) ? RATINGS[rating(r)].label : "", interests(r).join(" "),
-        // the library's extra fields (empty on a team card)
-        str(r, "honorific"), str(r, "fax"), listOf(r, "additionalPhones").join(" "), str(r, "building"), str(r, "street"),
-        str(r, "unit"), str(r, "postalCode"), str(r, "industry"), str(r, "linkedin"), str(r, "wechat"),
-        str(r, "translatedTitle"), str(r, "translatedCompany"), str(r, "translatedAddress")].join(" "));
+      const hay = searchText(r);
       return q.split(/\s+/).every((w) => hay.includes(w));
     });
     const byText = (get) => (a, b) => get(a).localeCompare(get(b), undefined, { sensitivity: "base" });
@@ -2718,7 +2740,94 @@
 
   // --------------------------------------------------------------- toolbar
 
-  $("search").addEventListener("input", (e) => { state.query = e.target.value; renderGrid(); });
+  // ---- search suggestions (the apps' search tokens) ----
+  function suggestionsFor(text) {
+    const q = fold(text.trim());
+    if (!q || !state.team) return [];
+    const now = Date.now();
+    const base = state.team.records.filter((r) => passesFilters(r, now));
+    const out = [];
+    if (state.team.personal) {
+      if (state.mfilter !== "owed" && "follow up owed followup".includes(q) && base.some(LIB.followUpOwed)) out.push({ kind: "Follow-up", value: "Owed", apply: () => setMFilter("owed") });
+      if (state.mfilter !== "reconnect" && "reconnect keep in touch due".includes(q) && base.some((r) => LIB.reconnectDue(r, now))) out.push({ kind: "Keep in touch", value: "Due", apply: () => setMFilter("reconnect") });
+    }
+    for (const k of ["hot", "warm", "cold"]) {
+      if ((k.startsWith(q) || "lead".startsWith(q) || q.startsWith("lead")) && state.rating !== k && base.some((r) => rating(r) === k)) {
+        out.push({ kind: "Lead", value: RATINGS[k].label, apply: () => setRating(k) });
+      }
+    }
+    // Field values that contain the text, most frequent first, three of each kind.
+    const top = (values, kind, current, apply) => {
+      const counts = new Map();
+      for (const raw of values) {
+        const v = (raw || "").trim();
+        if (!v || !fold(v).includes(q) || (current && same(v, current))) continue;
+        const key = fold(v);
+        const c = counts.get(key) || { value: v, count: 0 };
+        c.count++;
+        counts.set(key, c);
+      }
+      [...counts.values()].sort((a, b) => b.count - a.count).slice(0, 3)
+        .forEach((c) => out.push({ kind, value: c.value, count: c.count, apply: () => apply(c.value) }));
+    };
+    top(base.flatMap(interests), "Interest", state.interest, (v) => { state.interest = v; renderGrid(); });
+    top(base.map((r) => str(r, "country")), "Country", state.country, (v) => { state.country = v; $("country-filter").value = v; renderGrid(); });
+    top(base.map((r) => str(r, "company")), "Company", state.company, (v) => { state.company = v; renderGrid(); });
+    top(base.map((r) => str(r, "industry")), "Industry", state.industry, (v) => { state.industry = v; $("industry-filter").value = v; renderGrid(); });
+    top(base.map((r) => str(r, "eventTag")), "Event", state.event, (v) => { state.event = v; renderTeam(); });
+    return out;
+  }
+  let suggest = [], suggestAt = -1;
+  function renderSuggest() {
+    const box = $("search-suggest"), input = $("search");
+    suggest = suggestionsFor(input.value).slice(0, 12);
+    if (suggestAt >= suggest.length) suggestAt = -1;
+    box.replaceChildren();
+    box.hidden = !suggest.length;
+    input.setAttribute("aria-expanded", String(!!suggest.length));
+    input.removeAttribute("aria-activedescendant");
+    suggest.forEach((sg, i) => {
+      const o = el("div", "opt");
+      o.id = "sg-" + i;
+      o.setAttribute("role", "option");
+      o.setAttribute("aria-selected", String(i === suggestAt));
+      o.append(el("span", "k", sg.kind), el("span", "v", sg.value));
+      if (sg.count) o.append(el("span", "n", String(sg.count)));
+      o.addEventListener("mousedown", (e) => e.preventDefault());   // keep the focus in the field
+      o.addEventListener("click", () => pickSuggestion(i));
+      box.append(o);
+      if (i === suggestAt) input.setAttribute("aria-activedescendant", o.id);
+    });
+  }
+  function pickSuggestion(i) {
+    const sg = suggest[i];
+    if (!sg) return;
+    // Like the apps: the typed text becomes the filter.
+    $("search").value = "";
+    state.query = "";
+    suggestAt = -1;
+    sg.apply();
+    renderSuggest();
+  }
+  $("search").addEventListener("input", (e) => { state.query = e.target.value; suggestAt = -1; renderGrid(); renderSuggest(); });
+  $("search").addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      if (!suggest.length) return;
+      e.preventDefault();
+      suggestAt = e.key === "ArrowDown" ? Math.min(suggest.length - 1, suggestAt + 1) : Math.max(-1, suggestAt - 1);
+      renderSuggest();
+    } else if (e.key === "Enter" && suggestAt >= 0) {
+      e.preventDefault();
+      pickSuggestion(suggestAt);
+    } else if (e.key === "Escape" && suggest.length) {
+      e.stopPropagation();
+      suggest = [];
+      $("search-suggest").hidden = true;
+      $("search").setAttribute("aria-expanded", "false");
+    }
+  });
+  $("search").addEventListener("focus", () => renderSuggest());
+  $("search").addEventListener("blur", () => { $("search-suggest").hidden = true; $("search").setAttribute("aria-expanded", "false"); });
   for (const b of document.querySelectorAll("#filter-group button")) {
     b.addEventListener("click", () => setFilter(b.dataset.filter));
     b.setAttribute("aria-pressed", String(b.dataset.filter === state.filter));

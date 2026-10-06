@@ -28,7 +28,8 @@
   // The fields the page shows. Everything else on the record — the photos,
   // the OCR text, the sync bookkeeping — is left on the server: a full
   // fetch was 18 MB, mostly inline photos.
-  const TEXT_FIELDS = ["firstName", "lastName", "honorific", "title", "company", "industry",
+  const TEXT_FIELDS = ["firstName", "lastName", "firstNameAlternative", "lastNameAlternative", "phoneticName",
+    "honorific", "title", "company", "industry", "isoCountryCode",
     "phone", "mobile", "fax", "website", "wechat", "linkedin",
     "building", "street", "unit", "postalCode", "city", "country",
     "notes", "eventTag", "leadRating", "leadInterests",

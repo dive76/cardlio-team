@@ -14,7 +14,7 @@
 <meta name="theme-color" content="#4F46E5">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="assets/icon-192.png">
-<link rel="stylesheet" href="app.css?v=14">
+<link rel="stylesheet" href="app.css?v=15">
 </head>
 <body>
 
@@ -146,11 +146,14 @@
       <div class="stats" id="stats"></div>
 
       <div class="toolbar">
+        <div class="search-wrap">
         <label class="search">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg>
           <span class="sr-only">Search cards</span>
-          <input id="search" type="search" placeholder="Search name, company, email, city…" autocomplete="off" spellcheck="false">
+          <input id="search" type="search" role="combobox" aria-autocomplete="list" aria-controls="search-suggest" aria-expanded="false" placeholder="Search — name, company, country, event, note…" autocomplete="off" spellcheck="false">
         </label>
+        <div class="suggest" id="search-suggest" role="listbox" aria-label="Search suggestions" hidden></div>
+        </div>
         <div class="menu-wrap" id="filters-wrap">
           <button class="btn" id="filters-btn" type="button" aria-haspopup="true" aria-expanded="false">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
@@ -478,7 +481,7 @@
 
 <script src="config.js?v=1"></script>
 <script src="https://cdn.apple-cloudkit.com/ck/2/cloudkit.js"></script>
-<script src="mycards.js?v=1"></script>
-<script src="app.js?v=19"></script>
+<script src="mycards.js?v=2"></script>
+<script src="app.js?v=20"></script>
 </body>
 </html>
