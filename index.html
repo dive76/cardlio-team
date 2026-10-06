@@ -14,7 +14,7 @@
 <meta name="theme-color" content="#4F46E5">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="assets/icon-192.png">
-<link rel="stylesheet" href="app.css?v=15">
+<link rel="stylesheet" href="app.css?v=16">
 </head>
 <body>
 
@@ -214,6 +214,10 @@
       </div>
       <div class="active-filters" id="active-filters" hidden></div>
       <div class="chips" id="event-chips" hidden></div>
+      <section class="today mine-only" id="today" aria-label="Today" hidden>
+        <div class="today-col" id="today-owed"></div>
+        <div class="today-col" id="today-due"></div>
+      </section>
 
       <button class="new-pill" id="new-pill" type="button" hidden aria-live="polite"></button>
       <p class="result-line" id="result-line" aria-live="polite"></p>
@@ -249,6 +253,16 @@
   <button class="link" type="button" id="sel-none">Clear</button>
   <span class="spacer"></span>
   <button class="btn primary team-only" type="button" id="sel-claim">Claim</button>
+  <button class="btn mine-only" type="button" id="sel-event">Set event…</button>
+  <label class="mine-only"><span class="sr-only">Rate the selected cards</span>
+    <select class="select" id="sel-rate">
+      <option value="">Rate…</option>
+      <option value="hot">Hot</option>
+      <option value="warm">Warm</option>
+      <option value="cold">Cold</option>
+      <option value="clear">Clear the rating</option>
+    </select>
+  </label>
   <button class="btn" type="button" id="sel-vcf">vCard</button>
   <button class="btn" type="button" id="sel-csv">CSV</button>
   <button class="btn" type="button" id="sel-zip">ZIP</button>
@@ -340,6 +354,61 @@
     <div class="row">
       <button class="btn" type="button" id="c-cancel">Cancel</button>
       <button class="btn primary" type="submit" id="c-go">Claim and download</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="mail-dialog" class="small-dialog form-dialog" aria-labelledby="e-title">
+  <form method="dialog" id="mail-form" autocomplete="off">
+    <h2 id="e-title">Follow-up email</h2>
+    <label>To<select class="select" id="e-to"></select></label>
+    <label>Subject<input id="e-subject" maxlength="200"></label>
+    <label>Message<textarea id="e-body" rows="9" maxlength="4000"></textarea></label>
+    <div class="e-ai">
+      <div class="segmented" id="e-tone" role="group" aria-label="Tone">
+        <button type="button" data-tone="professional" aria-pressed="true">Professional</button>
+        <button type="button" data-tone="warm" aria-pressed="false">Warm</button>
+        <button type="button" data-tone="brief" aria-pressed="false">Brief</button>
+      </div>
+      <button class="btn" type="button" id="e-draft">Draft with Claude</button>
+    </div>
+    <p class="fine" id="e-fine"></p>
+    <label class="check" id="e-mark-label"><input type="checkbox" id="e-mark" checked> <span id="e-mark-text">Mark the follow-up done</span></label>
+    <p class="join-error" id="e-error" role="alert" hidden></p>
+    <div class="row">
+      <button class="btn" type="button" id="e-copy">Copy</button>
+      <button class="btn" type="button" id="e-cancel">Cancel</button>
+      <button class="btn primary" type="submit" id="e-go">Open in my mail app</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="remind-dialog" class="small-dialog" aria-labelledby="r-title">
+  <form method="dialog" id="remind-form">
+    <h2 id="r-title">Remind me</h2>
+    <p id="r-text"></p>
+    <div class="r-when">
+      <label>Day<input type="date" id="r-date" required></label>
+      <label>Time<input type="time" id="r-time" value="09:00" required></label>
+    </div>
+    <p class="fine">Downloads a calendar entry. Open it to add the reminder to Outlook, Google Calendar or Apple Calendar.</p>
+    <div class="row">
+      <button class="btn" type="button" id="r-cancel">Cancel</button>
+      <button class="btn primary" type="submit" id="r-go">Download reminder</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="bulk-event-dialog" class="small-dialog" aria-labelledby="be-title">
+  <form method="dialog" id="bulk-event-form" autocomplete="off">
+    <h2 id="be-title">Set the event</h2>
+    <p id="be-text"></p>
+    <label>Event<input id="be-event" list="be-events" maxlength="80" placeholder="e.g. Expo Singapore 2026"></label>
+    <datalist id="be-events"></datalist>
+    <p class="fine">Leave it empty to clear the event on these cards.</p>
+    <div class="row">
+      <button class="btn" type="button" id="be-cancel">Cancel</button>
+      <button class="btn primary" type="submit" id="be-go">Set event</button>
     </div>
   </form>
 </dialog>
@@ -481,7 +550,7 @@
 
 <script src="config.js?v=1"></script>
 <script src="https://cdn.apple-cloudkit.com/ck/2/cloudkit.js"></script>
-<script src="mycards.js?v=2"></script>
-<script src="app.js?v=20"></script>
+<script src="mycards.js?v=3"></script>
+<script src="app.js?v=21"></script>
 </body>
 </html>

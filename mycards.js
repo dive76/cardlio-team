@@ -195,18 +195,24 @@
   // CardKit KeepInTouch.state: due when the cadence has passed since the
   // last time in touch (the latest of "I was in touch", a done follow-up,
   // and the scan), counted in calendar months from that day's start.
-  function reconnectDue(r, now) {
+  function reconnectInfo(r) {
     const months = r.fields.keepInTouchMonths ? r.fields.keepInTouchMonths.value : 0;
-    if (!months) return false;
+    if (!months) return null;
     const added = dateOf(r, "addedAt");
     const contact = Math.max(dateOf(r, "lastContactAt"), dateOf(r, "followUpDoneAt"));
-    const last = contact && contact >= added ? contact : added;
-    if (!last) return false;
+    const fromContact = !!contact && contact >= added;
+    const last = fromContact ? contact : added;
+    if (!last) return null;
     const d = new Date(last);
-    const due = new Date(d.getFullYear(), d.getMonth() + months, d.getDate());
+    const dueOn = new Date(d.getFullYear(), d.getMonth() + months, d.getDate()).getTime();
+    return { months, last, fromContact, dueOn };
+  }
+  function reconnectDue(r, now) {
+    const info = reconnectInfo(r);
+    if (!info) return false;
     const today = new Date(now || Date.now());
     today.setHours(0, 0, 0, 0);
-    return today >= due;
+    return today.getTime() >= info.dueOn;
   }
 
   // The marker: any WebEntitlement record saying unlocked (one per
@@ -218,6 +224,6 @@
   root.CardlioLibrary = {
     ZONE, RECORD_TYPE, WEB_ZONE, DESIRED_KEYS,
     readBplist, unarchiveStrings, stringList, adaptRecord, dedupe,
-    followUpOwed, reconnectDue, isUnlocked
+    followUpOwed, reconnectDue, reconnectInfo, isUnlocked
   };
 })(typeof window !== "undefined" ? window : globalThis);

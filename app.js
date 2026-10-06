@@ -887,8 +887,9 @@
       });
     }
     renderActiveFilters();
+    renderToday();
     $("sel-hint").hidden = !(list.length > 1 && !state.selected.size);
-    $("sel-hint").textContent = personal ? "Tick cards to download or export just those. Shift-click ticks a range."
+    $("sel-hint").textContent = personal ? "Tick cards to rate, tag or download several at once. Shift-click ticks a range."
       : "Tick cards to claim, download or export just those. Shift-click ticks a range.";
     if (!personal && state.filter === "mine" && !myName() && total) $("no-match").querySelector("p").textContent = "Claim a card first — \"Mine\" shows the cards claimed under your name.";
     else $("no-match").querySelector("p").textContent = "Try a different search, or show all cards.";
@@ -1286,11 +1287,7 @@
     if (interests(r).length) fields.append(fieldRow("tag", "Interests", interests(r).join(", ")));
     const done = f(r, "followUpDoneAt");
     if (done) fields.append(fieldRow("check", "Follow-up", "Done on " + when(done)));
-    const months = f(r, "keepInTouchMonths");
-    if (months) {
-      const every = months === 12 ? "every year" : months === 1 ? "every month" : "every " + months + " months";
-      fields.append(fieldRow("check", "Keep in touch", every + (LIB.reconnectDue(r) ? " · due now" : "")));
-    }
+
     const translated = [str(r, "translatedTitle"), str(r, "translatedCompany"), str(r, "translatedAddress")].filter(Boolean);
     if (translated.length) {
       fields.append(fieldRow("tag", "Translation", translated.join("\n")));
@@ -1300,8 +1297,9 @@
 
   // ------------------------------------------------- edits to your own cards
   //
-  // Four fields only (owner, 2026-10-05): the lead rating, the event tag, a
-  // note added as a new line, and "follow-up done". Each save changes those
+  // Five fields only (owner, 2026-10-05/06): the lead rating, the event tag,
+  // a note added as a new line, "follow-up done" and "I was in touch"
+  // (lastContactAt — the fifth, proven in Development on 2026-10-06). Each save changes those
   // keys and CD_modifiedAt — nothing else — as a conflict-checked update:
   // if the card changed on a device since this page read it, iCloud refuses
   // and nothing is overwritten. Proven in the Development environment first
@@ -1309,7 +1307,7 @@
   // other field, and their own next edit of the card syncs normally).
   // Names, phones, e-mails, address, photos, new and deleted cards stay in
   // the apps.
-  async function updateLibraryCard(r, changes) {
+  async function updateLibraryCard(r, changes, quiet) {
     const lib = state.team;
     if (!lib || !lib.personal) throw new Error("Not a card of your library");
     const now = Date.now();
@@ -1322,6 +1320,7 @@
       const err = response.errors[0];
       const code = err.ckErrorCode || err.serverErrorCode || "";
       if (/CONFLICT|ATOMIC|CHANGED/.test(code)) {
+        if (quiet) throw Object.assign(new Error("changed elsewhere"), { conflict: true });
         try { await syncPersonal(lib, false); } catch (e) { /* the reload is best effort */ }
         renderTeam();
         if (state.open && state.open.recordName === r.recordName) openDetail(state.open);
@@ -1361,14 +1360,22 @@
     }
     const follow = $("m-follow");
     follow.replaceChildren();
-    follow.hidden = !LIB.followUpOwed(r);
-    if (LIB.followUpOwed(r)) {
-      follow.append(el("span", null, "You owe a follow-up since " + when(f(r, "followUpOwedAt")) + "."));
-      const b = el("button", "btn");
-      b.type = "button";
-      b.append(icon("check"), el("span", null, "Mark done"));
-      b.addEventListener("click", () => saveMine(r, { followUpDoneAt: Date.now() }, "Follow-up marked done"));
-      follow.append(b);
+    const info = LIB.reconnectInfo(r);
+    const owed = LIB.followUpOwed(r);
+    follow.hidden = !owed && !info;
+    const line = (text, purpose, doneLabel, doneChange, doneToast) => {
+      const row = el("div", "follow-line");
+      row.append(el("span", "what", text));
+      const btns = el("span", "btns");
+      btns.append(...followButtons(r, purpose, doneLabel, doneChange, doneToast));
+      row.append(btns);
+      follow.append(row);
+    };
+    if (owed) line("You owe a follow-up since " + when(f(r, "followUpOwedAt")) + ".", "followUp", "Mark done", { followUpDoneAt: Date.now() }, "Follow-up marked done");
+    if (info) {
+      const due = LIB.reconnectDue(r);
+      line("Keep in touch " + everyMonths(info.months) + " · " + (info.fromContact ? "last in touch " : "met ") + when(info.last) + " · " + (due ? "due now" : "next on " + when(info.dueOn)) + ".",
+        "reconnect", "I was in touch", { lastContactAt: Date.now() }, "Marked as in touch today");
     }
     $("m-event").value = str(r, "eventTag");
     $("m-event-save").disabled = true;
@@ -1395,6 +1402,301 @@
     const before = str(r, "notes");
     const added = when(Date.now()) + " · " + line;
     saveMine(r, { notes: before ? before + "\n" + added : added }, "Note added");
+  });
+
+  // ------------------------------------- follow up from anywhere (2026-10-06)
+  //
+  // The Today strip, the follow-up email (plain, or drafted with the
+  // person's own Claude / Gemini key under the apps' drafting rules), a
+  // calendar reminder as a file, and rating / tagging several cards at once.
+  function everyMonths(m) { return m === 12 ? "every year" : m === 1 ? "every month" : "every " + m + " months"; }
+  function followButtons(r, purpose, doneLabel, doneChange, doneToast) {
+    const out = [];
+    if (emails(r).length) {
+      const m = el("button", "btn small");
+      m.type = "button";
+      m.append(icon("mail"), el("span", null, "Email"));
+      m.addEventListener("click", () => openMail(r, purpose));
+      out.push(m);
+    }
+    const rm = el("button", "btn small");
+    rm.type = "button";
+    rm.append(el("span", null, "Remind me"));
+    rm.addEventListener("click", () => openRemind(r, purpose));
+    out.push(rm);
+    const d = el("button", "btn small");
+    d.type = "button";
+    d.append(icon("check"), el("span", null, doneLabel));
+    d.addEventListener("click", () => saveMine(r, Object.assign({}, doneChange, Object.fromEntries(Object.keys(doneChange).map((k) => [k, Date.now()]))), doneToast));
+    out.push(d);
+    return out;
+  }
+
+  function renderToday() {
+    const box = $("today"), lib = state.team;
+    if (!lib || !lib.personal) { box.hidden = true; return; }
+    const now = Date.now();
+    const quiet = !state.query.trim() && !activeFilters().length && !state.event;
+    const owed = lib.records.filter(LIB.followUpOwed).sort((a, b) => (f(a, "followUpOwedAt") || 0) - (f(b, "followUpOwedAt") || 0));
+    const due = lib.records.filter((r) => LIB.reconnectDue(r, now)).sort((a, b) => LIB.reconnectInfo(a).dueOn - LIB.reconnectInfo(b).dueOn);
+    box.hidden = !quiet || (!owed.length && !due.length);
+    if (box.hidden) return;
+    const col = (id, title, list, filter, sub, purpose, doneLabel, doneKey, doneToast) => {
+      const c = $(id);
+      c.replaceChildren();
+      c.hidden = !list.length;
+      if (!list.length) return;
+      const head = el("div", "today-head");
+      head.append(el("h2", null, title), el("span", "n", String(list.length)));
+      if (list.length > 5) head.append(summaryLink("Show all", () => setMFilter(filter)));
+      c.append(head);
+      for (const r of list.slice(0, 5)) {
+        const row = el("div", "today-row");
+        const av = el("span", "av", cardInitials(r));
+        av.style.background = `hsl(${personHue(displayName(r))} 55% 45%)`;
+        const who = el("div", "who");
+        const nm = el("button", "nm", displayName(r));
+        nm.type = "button";
+        nm.addEventListener("click", () => openDetail(r));
+        who.append(nm, el("span", "sub", [fullName(r) ? str(r, "company") : "", sub(r)].filter(Boolean).join(" · ")));
+        const btns = el("div", "btns");
+        btns.append(...followButtons(r, purpose, doneLabel, { [doneKey]: now }, doneToast));
+        row.append(av, who, btns);
+        c.append(row);
+      }
+    };
+    col("today-owed", "Follow-ups you owe", owed, "owed", (r) => "since " + when(f(r, "followUpOwedAt")), "followUp", "Done", "followUpDoneAt", "Follow-up marked done");
+    col("today-due", "Time to reconnect", due, "reconnect", (r) => { const i = LIB.reconnectInfo(r); return everyMonths(i.months) + " · " + (i.fromContact ? "last in touch " : "met ") + when(i.last); },
+      "reconnect", "In touch", "lastContactAt", "Marked as in touch today");
+  }
+
+  // -- the email
+  function greetingFor(r) {
+    const hon = str(r, "honorific"), first = str(r, "firstName"), last = str(r, "lastName");
+    if (hon && last) return hon + " " + last;
+    return first || fullName(r) || "";
+  }
+  function plainDraft(r, purpose) {
+    const ev = str(r, "eventTag"), greet = greetingFor(r), sign = myName() || "[Your name]", co = str(r, "company");
+    const hello = greet ? "Dear " + greet + ",\n\n" : "Hello,\n\n";
+    if (purpose === "reconnect") {
+      const i = LIB.reconnectInfo(r);
+      const since = i && i.fromContact ? "since we last spoke" : ev ? "since we met at " + ev : "since we met";
+      return { subject: "Catching up", body: hello + "It has been a while " + since + (co && fullName(r) ? ", and I hope all is well at " + co : "") + ". Would you have time for a short call in the coming weeks?\n\nBest regards,\n" + sign };
+    }
+    const its = interests(r);
+    return { subject: ev ? "Good to meet you at " + ev : "Good to meet you",
+      body: hello + "It was good to meet you" + (ev ? " at " + ev : "") + "." + (its.length ? " I would be glad to share more about " + (its.length > 1 ? its.slice(0, -1).join(", ") + " and " + its[its.length - 1] : its[0]) + "." : "") + " Let us stay in touch.\n\nBest regards,\n" + sign };
+  }
+  // The apps' drafting rules (FollowUpDraft.swift), for Claude / Gemini.
+  const DRAFT_RULES = "You draft short follow-up emails after business meetings, based on a scanned business card and optional meeting notes.\n\nCRITICAL RULES:\n- Use ONLY the facts provided: the contact's details and the meeting notes. NEVER invent meeting circumstances, dates, commitments, or shared interests that are not in the notes.\n- If no meeting notes are provided, keep the body generic: it was good to meet, brief interest in staying in touch. Do not guess where or why they met.\n- Address the person naturally (first name unless an honorific like Dr. or Capt. is present — then honorific + family name).\n- Never include placeholders other than '[Your name]' when the sender name is missing.\n- No signatures beyond the sign-off line. No subject inside the body.\n\nAnswer with JSON only, no markdown: {\"subject\": \"...\", \"body\": \"...\"}. subject: short, specific, no quotes, no 'Re:'. body: greeting using the person's name, 2-4 short sentences, sign-off on its own line ending with the sender's name (or '[Your name]' if no sender name was given).";
+  const TONES = { professional: ["Professional", "Business-formal but not stiff. Complete sentences."], warm: ["Warm", "Friendly and personable while staying professional."], brief: ["Brief", "As short as politeness allows — two sentences plus sign-off."] };
+  function draftPrompt(r, purpose, tone) {
+    const facts = [];
+    if (displayName(r)) facts.push("Name: " + displayName(r));
+    if (str(r, "honorific")) facts.push("Honorific: " + str(r, "honorific"));
+    if (str(r, "title")) facts.push("Job title: " + str(r, "title"));
+    if (str(r, "company")) facts.push("Company: " + str(r, "company"));
+    const place = [str(r, "city"), str(r, "country")].filter(Boolean).join(", ");
+    if (place) facts.push("Location: " + place);
+    if (str(r, "eventTag")) facts.push("Met at: " + str(r, "eventTag"));
+    if (interests(r).length) facts.push("They were interested in: " + interests(r).join(", "));
+    const monthYear = (ms) => new Date(ms).toLocaleDateString("en", { month: "long", year: "numeric" });
+    if (purpose === "reconnect") {
+      const i = LIB.reconnectInfo(r);
+      if (i) facts.push((i.fromContact ? "Last in touch: " : "First met: ") + monthYear(i.last));
+    }
+    const notes = str(r, "notes"), sender = myName();
+    let p = "CONTACT:\n" + facts.join("\n") + "\n\nMEETING NOTES:\n" + (notes || "(none)");
+    p += "\n\nSENDER NAME: " + (sender || "(unknown — use [Your name])");
+    p += "\n\nTONE: " + TONES[tone][0] + " — " + TONES[tone][1];
+    if (purpose === "reconnect") p += "\n\nPURPOSE: A friendly check-in with someone the sender met a while ago and has not been in touch with since the date above. Do NOT write as if the meeting just happened. Suggest catching up; never invent news, offers or plans.";
+    return p;
+  }
+  async function draftWithAI(provider, key, prompt) {
+    let res;
+    if (provider === "claude") {
+      res = await fetch(AI.claude.url, { method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
+        body: JSON.stringify({ model: AI.claude.model, max_tokens: 800, system: DRAFT_RULES, messages: [{ role: "user", content: prompt }] }) });
+    } else {
+      res = await fetch(AI.gemini.url, { method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], systemInstruction: { parts: [{ text: DRAFT_RULES }] },
+          generationConfig: { responseMimeType: "application/json", maxOutputTokens: 2048 } }) });
+    }
+    if (!res.ok) {
+      let detail = "";
+      try { const j = await res.json(); detail = (j.error && (j.error.message || j.error.type)) || ""; } catch (e) { /* */ }
+      if (res.status === 401 || res.status === 403) throw Object.assign(new Error(AI[provider].label + " rejected the key" + (detail ? ": " + detail : "")), { badKey: true });
+      throw new Error(AI[provider].label + " answered " + res.status + (detail ? ": " + detail : ""));
+    }
+    const j = await res.json();
+    const text = provider === "claude" ? (j.content || []).map((b) => b.text || "").join("")
+      : (((j.candidates || [])[0] || {}).content || { parts: [] }).parts.map((x) => x.text || "").join("");
+    const a = text.indexOf("{"), b = text.lastIndexOf("}");
+    if (a < 0 || b < a) throw new Error(AI[provider].label + " returned no draft");
+    const out = JSON.parse(text.slice(a, b + 1));
+    if (typeof out.body !== "string" || !out.body.trim()) throw new Error(AI[provider].label + " returned no draft");
+    return { subject: typeof out.subject === "string" ? out.subject.trim() : "", body: out.body.trim() };
+  }
+  let mailFor = null, mailPurpose = "followUp", mailTone = "professional";
+  function openMail(r, purpose) {
+    mailFor = r; mailPurpose = purpose;
+    const to = $("e-to");
+    to.replaceChildren();
+    for (const e of emails(r)) { const o = el("option", null, e); o.value = e; to.append(o); }
+    const d = plainDraft(r, purpose);
+    $("e-subject").value = d.subject;
+    $("e-body").value = d.body;
+    $("e-title").textContent = (purpose === "reconnect" ? "Reconnect with " : "Follow up with ") + displayName(r);
+    const p = aiProvider();
+    $("e-draft").textContent = aiKey(p) ? "Draft with " + AI[p].label : "Draft with AI…";
+    $("e-fine").textContent = "Draft with AI sends this person's name, title, company, city, event, interests and your notes on the card to " + AI[p].label + " under your own key — only when you press it. The email opens in your own mail app; nothing is sent from here.";
+    const markable = purpose === "followUp" ? LIB.followUpOwed(r) : !!LIB.reconnectInfo(r);
+    $("e-mark-label").hidden = !markable;
+    $("e-mark-text").textContent = purpose === "followUp" ? "Mark the follow-up done" : "Mark as in touch today";
+    $("e-mark").checked = true;
+    $("e-error").hidden = true;
+    $("mail-dialog").showModal();
+    $("e-body").focus();
+  }
+  for (const b of document.querySelectorAll("#e-tone button")) {
+    b.addEventListener("click", () => {
+      mailTone = b.dataset.tone;
+      for (const x of document.querySelectorAll("#e-tone button")) x.setAttribute("aria-pressed", String(x === b));
+    });
+  }
+  async function runDraft() {
+    const r = mailFor, p = aiProvider(), key = aiKey(p);
+    if (!r) return;
+    if (!key) { openKeys(() => { $("e-draft").textContent = "Draft with " + AI[aiProvider()].label; runDraft(); }); return; }
+    $("e-draft").disabled = true;
+    $("e-error").hidden = true;
+    const label = $("e-draft").textContent;
+    $("e-draft").textContent = "Drafting…";
+    try {
+      const d = await draftWithAI(p, key, draftPrompt(r, mailPurpose, mailTone));
+      if (d.subject) $("e-subject").value = d.subject;
+      $("e-body").value = d.body;
+    } catch (err) {
+      $("e-error").textContent = err.message || String(err);
+      $("e-error").hidden = false;
+      if (err.badKey) openKeys(() => runDraft());
+    } finally {
+      $("e-draft").disabled = false;
+      $("e-draft").textContent = label;
+    }
+  }
+  $("e-draft").addEventListener("click", runDraft);
+  $("e-cancel").addEventListener("click", () => $("mail-dialog").close());
+  $("e-copy").addEventListener("click", async () => {
+    const text = ($("e-subject").value ? $("e-subject").value + "\n\n" : "") + $("e-body").value;
+    try { await navigator.clipboard.writeText(text); toast("Copied"); } catch (e) { toast("Could not copy", true); }
+  });
+  $("mail-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const r = mailFor;
+    if (!r) return;
+    const to = $("e-to").value;
+    const url = "mailto:" + encodeURIComponent(to).replace(/%40/g, "@") + "?subject=" + encodeURIComponent($("e-subject").value) + "&body=" + encodeURIComponent($("e-body").value);
+    const a = document.createElement("a");
+    a.href = url;
+    document.body.append(a); a.click(); a.remove();
+    $("mail-dialog").close();
+    if (!$("e-mark-label").hidden && $("e-mark").checked) {
+      if (mailPurpose === "followUp") saveMine(r, { followUpDoneAt: Date.now() }, "Follow-up marked done");
+      else saveMine(r, { lastContactAt: Date.now() }, "Marked as in touch today");
+    }
+  });
+
+  // -- the reminder, as a calendar file
+  let remindFor = null, remindPurpose = "followUp";
+  const ymd = (d) => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  function openRemind(r, purpose) {
+    remindFor = r; remindPurpose = purpose;
+    const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(0, 0, 0, 0);
+    let day = tomorrow;
+    if (purpose === "reconnect") { const i = LIB.reconnectInfo(r); if (i && i.dueOn > tomorrow.getTime()) day = new Date(i.dueOn); }
+    $("r-date").value = ymd(day);
+    $("r-time").value = "09:00";
+    $("r-title").textContent = purpose === "reconnect" ? "Remind me to get back in touch" : "Remind me to follow up";
+    const what = (purpose === "reconnect" ? "Reconnect with " : "Follow up with ") + displayName(r) + (fullName(r) && str(r, "company") ? " · " + str(r, "company") : "");
+    $("r-text").textContent = /[.!?]$/.test(what) ? what : what + ".";
+    $("remind-dialog").showModal();
+  }
+  function icsText(r, purpose, start) {
+    const pad = (n) => String(n).padStart(2, "0");
+    const local = (d) => d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + "T" + pad(d.getHours()) + pad(d.getMinutes()) + "00";
+    const utc = (d) => d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+    const esc = (t) => String(t).replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
+    const summary = (purpose === "reconnect" ? "Reconnect with " : "Follow up with ") + displayName(r) + (fullName(r) && str(r, "company") ? " (" + str(r, "company") + ")" : "");
+    const desc = [[str(r, "title"), str(r, "company")].filter(Boolean).join(", "), emails(r)[0] ? "Email: " + emails(r)[0] : "",
+      (str(r, "mobile") || str(r, "phone")) ? "Phone: " + (str(r, "mobile") || str(r, "phone")) : "", str(r, "eventTag") ? "Met at: " + str(r, "eventTag") : "",
+      "Card: " + location.origin + location.pathname + "#" + new URLSearchParams({ team: MINE_ID, card: r.recordName }).toString()].filter(Boolean).join("\n");
+    const uid = (window.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2)) + "@team.cardlio.app";
+    return ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//cardlio//team.cardlio.app//EN", "CALSCALE:GREGORIAN", "METHOD:PUBLISH",
+      "BEGIN:VEVENT", "UID:" + uid, "DTSTAMP:" + utc(new Date()), "DTSTART:" + local(start), "DURATION:PT15M",
+      "SUMMARY:" + esc(summary), "DESCRIPTION:" + esc(desc),
+      "BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:" + esc(summary), "TRIGGER:PT0M", "END:VALARM",
+      "END:VEVENT", "END:VCALENDAR"].map(vFold).join("\r\n") + "\r\n";
+  }
+  $("r-cancel").addEventListener("click", () => $("remind-dialog").close());
+  $("remind-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const r = remindFor;
+    if (!r || !$("r-date").value) return;
+    const [y, m, d] = $("r-date").value.split("-").map(Number);
+    const [hh, mm] = ($("r-time").value || "09:00").split(":").map(Number);
+    const start = new Date(y, m - 1, d, hh, mm);
+    saveFile(fileSafe((remindPurpose === "reconnect" ? "Reconnect - " : "Follow up - ") + displayName(r)) + ".ics", "text/calendar;charset=utf-8", icsText(r, remindPurpose, start));
+    $("remind-dialog").close();
+    toast("Reminder downloaded — open it to add it to your calendar");
+  });
+
+  // -- several cards at once (My cards)
+  async function bulkUpdate(changesFor, doneText) {
+    const lib = state.team;
+    if (!lib || !lib.personal) return;
+    const cards = selectedRecords();
+    let done = 0, failed = 0, step = 0;
+    for (const r of cards) {
+      step++;
+      const ch = changesFor(r);
+      if (!ch) continue;
+      toast("Saving " + step + " of " + cards.length + "…");
+      try { await updateLibraryCard(r, ch, true); done++; } catch (e) { failed++; }
+    }
+    if (failed) { try { await syncPersonal(lib, false); } catch (e) { /* best effort */ } }
+    renderTeam();
+    toast(doneText(done) + (failed ? " · " + plural(failed, "card") + " changed on a device meanwhile — check and try again" : ""), !!failed);
+  }
+  $("sel-rate").addEventListener("change", (e) => {
+    const v = e.target.value;
+    e.target.value = "";
+    if (!v) return;
+    const target = v === "clear" ? "" : v;
+    bulkUpdate((r) => (rating(r) === target ? null : { leadRating: target }),
+      (n) => (target ? "Rated " + plural(n, "card") + " " + RATINGS[target].label : "Cleared the rating on " + plural(n, "card")));
+  });
+  $("sel-event").addEventListener("click", () => {
+    const lib = state.team;
+    if (!lib || !lib.personal) return;
+    const dl = $("be-events");
+    dl.replaceChildren();
+    for (const ev of [...new Set(lib.records.map((r) => str(r, "eventTag")).filter(Boolean))].sort()) { const o = document.createElement("option"); o.value = ev; dl.append(o); }
+    $("be-text").textContent = plural(state.selected.size, "card") + " selected.";
+    $("be-event").value = "";
+    $("bulk-event-dialog").showModal();
+    $("be-event").focus();
+  });
+  $("be-cancel").addEventListener("click", () => $("bulk-event-dialog").close());
+  $("bulk-event-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const v = $("be-event").value.trim();
+    $("bulk-event-dialog").close();
+    bulkUpdate((r) => (str(r, "eventTag") === v ? null : { eventTag: v }),
+      (n) => (v ? "Set the event on " + plural(n, "card") : "Cleared the event on " + plural(n, "card")));
   });
 
   function stepDetail(delta) {
@@ -1430,7 +1732,15 @@
         try { await navigator.clipboard.writeText(url); toast("Link copied"); }
         catch (e) { toast(url); }
       });
-      actions.append(dl, link);
+      actions.append(dl);
+      if (emails(r).length) {
+        const w = el("button", "btn");
+        w.type = "button";
+        w.append(icon("mail"), el("span", null, "Write email"));
+        w.addEventListener("click", () => openMail(r, LIB.followUpOwed(r) || !LIB.reconnectDue(r) ? "followUp" : "reconnect"));
+        actions.append(w);
+      }
+      actions.append(link);
       return;
     }
     const claimedBy = str(r, "claimedBy");
