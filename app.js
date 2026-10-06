@@ -2172,14 +2172,16 @@
     }
     // A phone gets a narrow, taller drawing so the text stays readable.
     const narrow = window.innerWidth < 640;
-    const W = narrow ? 400 : 960, H = Math.round(narrow ? Math.min(640, Math.max(380, 260 + nodes.length * 7)) : Math.min(560, Math.max(300, 200 + nodes.length * 6))), radius = (n) => n.kind === "event" ? 9 + 3 * Math.sqrt(n.people) : 4 + 2.4 * Math.sqrt(n.people);
+    const W = narrow ? 400 : 960, maxH = narrow ? 620 : 560;
+    const radius = (n) => { const s = Math.sqrt(n.people); return narrow ? (n.kind === "event" ? 7 + 2 * s : 3.5 + 1.7 * s) : (n.kind === "event" ? 9 + 3 * s : 4 + 2.4 * s); };
+    let H = maxH;
     // Events stand on a ring; each company is pulled towards the events
     // where you met it, so a one-fair company sits beside its fair and a
     // company met at several fairs ends up between them, near the middle.
     // Laid out around (0, 0), then fitted into the frame.
     const RX = narrow ? 130 : 330, RY = narrow ? 230 : 190;
     evs.forEach((e, i) => {
-      const ang = -Math.PI / 2 + 2 * Math.PI * i / evs.length;
+      const ang = (evs.length === 2 ? Math.PI : -Math.PI / 2) + 2 * Math.PI * i / evs.length;   // two fairs side by side
       e.x = evs.length === 1 ? 0 : RX * Math.cos(ang); e.y = evs.length === 1 ? 0 : RY * Math.sin(ang);
     });
     const evPos = new Map(evs.map((e) => [e.label, e]));
@@ -2207,10 +2209,14 @@
         c.x += fx * k; c.y += fy * k;
       }
     }
-    const mx = narrow ? 56 : 90, myT = 22, myB = 34;   // room for the labels
+    // Margins hold the biggest node plus its label — sizes do not scale with the fit.
+    const maxR = Math.max(...nodes.map(radius));
+    const mx = (narrow ? 56 : 90) + maxR / 2, myT = 6 + maxR, myB = 20 + maxR;
     const xs = nodes.map((n) => n.x), ys = nodes.map((n) => n.y);
     const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
-    const sc = Math.min(1.6, (W - 2 * mx) / Math.max(1, x1 - x0), (H - myT - myB) / Math.max(1, y1 - y0));
+    // Fill the width; the height follows the drawing (no empty bands), up to a cap.
+    const sc = Math.min(1.6, (W - 2 * mx) / Math.max(1, x1 - x0), (maxH - myT - myB) / Math.max(1, y1 - y0));
+    H = Math.round(Math.max(240, (y1 - y0) * sc + myT + myB));
     for (const n of nodes) {
       n.x = W / 2 + (n.x - (x0 + x1) / 2) * sc;
       n.y = myT + (H - myT - myB) / 2 + (n.y - (y0 + y1) / 2) * sc;
