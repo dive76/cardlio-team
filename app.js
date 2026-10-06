@@ -863,14 +863,20 @@
     $("no-match").hidden = !(total > 0 && list.length === 0);
     $("result-line").textContent = total ? (list.length === total ? plural(total, "card") : list.length + " of " + plural(total, "card")) : "";
     const asList = state.view === "list", asStats = state.view === "stats";
-    grid.hidden = asList || asStats;
+    const asMap = state.view === "map" && mapOffered();
+    grid.hidden = asList || asStats || asMap;
+    $("map-view").hidden = !asMap;
+    // The Map button exists only on My cards: on a team the map view
+    // falls back to the cards, and the toggle says so.
+    for (const x of document.querySelectorAll(".view-toggle button")) x.setAttribute("aria-pressed", String(x.dataset.view === (state.view === "map" && !asMap ? "grid" : state.view)));
     $("list-wrap").hidden = !asList || !list.length;
     $("overview").hidden = !asStats || !list.length;
     // A ticked card that left the team (deleted in the app) leaves the selection.
     const alive = new Set(state.team.records.map((r) => r.recordName));
     for (const id of state.selected) if (!alive.has(id)) state.selected.delete(id);
     renderRecap(list, asStats);
-    if (asStats) renderOverview(list);
+    if (asMap) renderMap(list);
+    else if (asStats) renderOverview(list);
     else if (asList) renderList(list);
     else {
       // Newest first reads as time: Last 7 days / Last 30 days / Earlier,
@@ -895,7 +901,7 @@
     }
     renderActiveFilters();
     renderToday();
-    $("sel-hint").hidden = asStats || !(list.length > 1 && !state.selected.size);
+    $("sel-hint").hidden = asStats || asMap || !(list.length > 1 && !state.selected.size);
     $("sel-hint").textContent = personal ? "Tick cards to rate, tag or download several at once. Shift-click ticks a range."
       : "Tick cards to claim, download or export just those. Shift-click ticks a range.";
     if (!personal && state.filter === "mine" && !myName() && total) $("no-match").querySelector("p").textContent = "Claim a card first — \"Mine\" shows the cards claimed under your name.";
@@ -1599,6 +1605,152 @@
     box.append(barPanel("Companies", countBy(list, (r) => str(r, "company")).map(pick((v) => { state.company = v; renderGrid(); }))));
     box.append(barPanel("Events", countBy(list, (r) => str(r, "eventTag")).map(pick((v) => { state.event = v; renderTeam(); }))));
   }
+  // ------------------------------------------------ map (2026-10-06)
+  //
+  // My cards on Apple Maps (MapKit JS): a pin per card the apps placed —
+  // they geocode the address at scan time, so the page only reads
+  // latitude / longitude and sends no address anywhere. MapKit loads the
+  // first time the Map view opens, never before, and only when config.js
+  // carries a token. Apple then sees the map area being looked at, not
+  // the cards: pins are drawn in the browser.
+  const MAPKIT_URL = cfg.mapkitURL || "https://cdn.apple-mapkit.com/mk/5.x.x/mapkit.core.js";
+  const mapState = { loading: null, map: null, ids: "", failed: "" };
+  const darkQuery = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+  function mapTokenExpiry() {
+    try {
+      const part = String(cfg.mapkitToken || "").split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+      const exp = JSON.parse(atob(part + "===".slice((part.length + 3) % 4))).exp;
+      return typeof exp === "number" ? exp * 1000 : 0;
+    } catch (e) { return 0; }
+  }
+  const mapOffered = () => !!cfg.mapkitToken && !!(state.team && state.team.personal);
+  $("view-map").hidden = !cfg.mapkitToken;
+  function hasPlace(r) { return typeof f(r, "latitude") === "number" && typeof f(r, "longitude") === "number"; }
+  function loadMapKit() {
+    if (mapState.loading) return mapState.loading;
+    mapState.loading = new Promise((resolve, reject) => {
+      const cb = "__cardlioMapKitReady";
+      window[cb] = () => { delete window[cb]; resolve(window.mapkit); };
+      const sc = document.createElement("script");
+      sc.src = MAPKIT_URL;
+      sc.crossOrigin = "anonymous";
+      sc.async = true;
+      sc.dataset.callback = cb;
+      sc.dataset.libraries = "map,annotations";
+      sc.dataset.initialToken = cfg.mapkitToken;
+      sc.onerror = () => reject(new Error("MapKit did not load"));
+      document.head.append(sc);
+    }).then((mk) => {
+      // "Unauthorized": the token expired or was revoked; the rest of the
+      // page does not depend on it.
+      mk.addEventListener("error", (e) => {
+        const why = e && e.status;
+        mapState.failed = why === "Too Many Requests" ? "Apple Maps is busy — try again in a minute."
+          : "Apple Maps did not accept the map key (it may have expired). Everything else on this page works as usual.";
+        if (state.view === "map") renderGrid();
+        if (why === "Too Many Requests") setTimeout(() => { mapState.failed = ""; }, 60000);
+      });
+      return mk;
+    });
+    mapState.loading.catch(() => { mapState.loading = null; });
+    return mapState.loading;
+  }
+  function mapProblem(text) {
+    $("map").hidden = true;
+    $("map-pick").hidden = true;
+    $("map-note").textContent = text;
+    $("map-view").classList.add("problem");
+  }
+  function renderMap(list) {
+    $("map-view").classList.remove("problem");
+    $("map-pick").hidden = true;
+    const exp = mapTokenExpiry();
+    if (!exp) return mapProblem("The map key in this page is not valid. Everything else works as usual.");
+    if (exp < Date.now()) return mapProblem("The map key expired on " + new Date(exp).toLocaleDateString("en", { day: "numeric", month: "long", year: "numeric" }) + ". Everything else works as usual.");
+    if (mapState.failed) return mapProblem(mapState.failed);
+    $("map").hidden = false;
+    const placed = list.filter(hasPlace);
+    const missing = list.length - placed.length;
+    $("map-note").textContent = !placed.length ? "None of these cards has a location yet. The apps place a card when Apple Maps finds its address."
+      : missing ? plural(missing, "card") + " without a location — the apps place a card when Apple Maps finds its address." : "";
+    loadMapKit().then((mk) => drawMap(mk, placed)).catch(() => mapProblem("Apple Maps could not be loaded. Check the connection and open the map again."));
+  }
+  function drawMap(mk, placed) {
+    if (state.view !== "map" || $("map-view").hidden) return;
+    const scheme = () => (darkQuery && darkQuery.matches ? mk.Map.ColorSchemes.Dark : mk.Map.ColorSchemes.Light);
+    const accent = () => getComputedStyle(document.body).getPropertyValue("--accent").trim() || "#4F46E5";
+    let map = mapState.map;
+    if (!map) {
+      map = mapState.map = new mk.Map($("map"), {
+        colorScheme: scheme(), showsPointsOfInterest: false, isRotationEnabled: false,
+        showsCompass: mk.FeatureVisibility.Hidden, showsMapTypeControl: false
+      });
+      if (darkQuery && darkQuery.addEventListener) darkQuery.addEventListener("change", () => {
+        map.colorScheme = scheme();
+        for (const a of map.annotations) a.color = accent();
+      });
+      // A cluster shows its count; tapping it zooms in, unless every card
+      // in it shares one address — then zooming cannot split it, so the
+      // cards are listed under the map instead.
+      map.annotationForCluster = (cluster) => {
+        cluster.glyphText = String(cluster.memberAnnotations.length);
+        cluster.color = accent();
+        cluster.calloutEnabled = false;
+        return cluster;
+      };
+      map.addEventListener("select", (e) => {
+        const a = e.annotation;
+        if (!a) return;
+        setTimeout(() => { map.selectedAnnotation = null; }, 0);
+        const members = a.memberAnnotations;
+        if (members && members.length) {
+          const c0 = members[0].coordinate;
+          const oneSpot = members.every((m) => Math.abs(m.coordinate.latitude - c0.latitude) < 1e-4 && Math.abs(m.coordinate.longitude - c0.longitude) < 1e-4);
+          if (oneSpot) showMapPick(members);
+          else map.showItems(members, { animate: true, padding: new mk.Padding(70, 70, 70, 70) });
+          return;
+        }
+        const r = a.data && state.team.records.find((x) => x.recordName === a.data.id);
+        if (r) openDetail(r);
+      });
+      map.addEventListener("region-change-start", () => { $("map-pick").hidden = true; });
+    }
+    map.removeAnnotations(map.annotations);
+    const anns = placed.map((r) => {
+      const name = displayName(r), company = str(r, "company");
+      return new mk.MarkerAnnotation(new mk.Coordinate(f(r, "latitude"), f(r, "longitude")), {
+        title: name, subtitle: company && company !== name ? company : "",
+        glyphText: initials(name), color: accent(), calloutEnabled: false,
+        clusteringIdentifier: "cards", animates: false, data: { id: r.recordName }
+      });
+    });
+    map.addAnnotations(anns);
+    // Fit the pins when the set changes (a filter, a search) — not on
+    // every poll, which would undo the user's own pan and zoom.
+    const ids = placed.map((r) => r.recordName).sort().join("|");
+    if (ids !== mapState.ids) {
+      mapState.ids = ids;
+      if (anns.length) map.showItems(anns, { animate: false, padding: new mk.Padding(60, 60, 60, 60) });
+    }
+  }
+  function showMapPick(members) {
+    const box = $("map-pick");
+    box.replaceChildren(el("h3", null, plural(members.length, "card") + " at this address"));
+    const ul = el("ul");
+    for (const m of members) {
+      const r = m.data && state.team.records.find((x) => x.recordName === m.data.id);
+      if (!r) continue;
+      const b = el("button", "map-pick-row"); b.type = "button";
+      b.append(el("strong", null, displayName(r)));
+      if (m.subtitle) b.append(el("span", null, m.subtitle));
+      b.addEventListener("click", () => openDetail(r));
+      const li = el("li"); li.append(b); ul.append(li);
+    }
+    box.append(ul);
+    box.hidden = false;
+  }
+  if (cfg.testHooks) window.__cardlioMapState = () => ({ loaded: !!window.mapkit, ids: mapState.ids, failed: mapState.failed, pins: mapState.map ? mapState.map.annotations.length : 0, note: $("map-note").textContent });
+
   function setView(v) {
     state.view = v;
     storageSet("cardlio.team.view", v);

@@ -36,6 +36,7 @@
     "translatedTitle", "translatedCompany", "translatedAddress"];
   const DATE_FIELDS = ["addedAt", "modifiedAt", "followUpOwedAt", "followUpDoneAt", "lastContactAt"];
   const DESIRED_KEYS = ["CD_id", "CD_emails", "CD_additionalPhones", "CD_keepInTouchMonths",
+    "CD_latitude", "CD_longitude",
     "CD_thumbnailData", "CD_thumbnailData_ckAsset"]
     .concat(TEXT_FIELDS.map((k) => "CD_" + k), DATE_FIELDS.map((k) => "CD_" + k));
 
@@ -144,6 +145,14 @@
     }
     const months = get("keepInTouchMonths");
     if (months && typeof months.value === "number" && months.value > 0) fields.keepInTouchMonths = { value: months.value };
+    // Where Apple Maps placed the card's address (the apps geocode it at
+    // scan time). Read-only on the web; the map view pins it.
+    const lat = get("latitude"), lon = get("longitude");
+    if (lat && lon && typeof lat.value === "number" && typeof lon.value === "number"
+        && Math.abs(lat.value) <= 90 && Math.abs(lon.value) <= 180 && (lat.value !== 0 || lon.value !== 0)) {
+      fields.latitude = { value: lat.value };
+      fields.longitude = { value: lon.value };
+    }
     const mails = stringList(get("emails"));
     if (mails.length) fields.emails = { value: mails };
     const others = stringList(get("additionalPhones"));

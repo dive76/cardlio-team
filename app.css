@@ -952,3 +952,16 @@ button.bar-row:hover, button.bar-row:focus-visible { background: var(--bg-sunken
 .also-at { font-size: 13.5px; color: var(--ink-2); background: var(--bg-alt); border-radius: 10px; padding: 10px 12px; }
 .also-at button { font: inherit; font-weight: 600; color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; }
 .also-at button:hover { text-decoration: underline; }
+
+/* ------------------------------------------- map (2026-10-06) */
+.map-view { margin-top: 10px; }
+.map { height: min(70vh, 640px); min-height: 360px; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line); background: var(--bg-raised); box-shadow: var(--shadow); }
+.map-note { margin-top: 8px; }
+.map-view.problem .map-note { padding: 18px; border: 1px dashed var(--line); border-radius: var(--radius); }
+.map-pick { margin-top: 10px; background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; box-shadow: var(--shadow); }
+.map-pick h3 { margin: 0 0 6px; font-size: 14px; }
+.map-pick ul { list-style: none; margin: 0; padding: 0; }
+.map-pick-row { width: 100%; text-align: left; display: flex; flex-direction: column; gap: 2px; padding: 9px 4px; background: none; border: 0; border-top: 1px solid var(--line); color: inherit; font: inherit; cursor: pointer; }
+.map-pick li:first-child .map-pick-row { border-top: 0; }
+.map-pick-row span { color: var(--muted, inherit); font-size: 13px; }
+@media (max-width: 640px) { .map { height: 62vh; min-height: 300px; } }
